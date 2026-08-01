@@ -78,9 +78,10 @@ Example:
 
 ```env
 OPENROUTER_API_KEY=your_api_key
+DATABASE_URL="postgresql://username:password@host/database?sslmode=require"
 OPENROUTER_MODEL=openrouter/free
 
-DATABASE_URL="file:./devforge.db"
+
 JWT_SECRET=your_secret
 ```
 
