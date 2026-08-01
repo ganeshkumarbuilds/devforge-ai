@@ -1,0 +1,119 @@
+// DevForge AI database schema.
+// Provider is SQLite for local development. For production, switch the
+// datasource `provider` to "postgresql" and set a proper DATABASE_URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String      @id @default(cuid())
+  email        String      @unique
+  passwordHash String
+  name         String
+  settings     Json?
+  projects     Project[]
+  sessions     Session[]
+  downloads    Download[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  ip        String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+  lastSeen  DateTime  @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  @@index([userId])
+}
+
+model Project {
+  id          String       @id @default(cuid())
+  title       String
+  description String
+  stack       String
+  status      String       @default("completed")
+  ownerId     String
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  agents      AgentRun[]
+  files       ProjectFile[]
+  logs        BuildLog[]
+  downloads   Download[]
+  error       String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([ownerId, createdAt])
+  @@index([status])
+}
+
+model AgentRun {
+  id          String     @id @default(cuid())
+  projectId   String
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  role        String
+  displayName String     @default("")
+  status      String     @default("pending")
+  progress    Int        @default(0)
+  output      String?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
+}
+
+model ProjectFile {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  path      String
+  content   String
+  language  String   @default("")
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, path])
+  @@index([projectId])
+}
+
+model BuildLog {
+  id         String    @id @default(cuid())
+  projectId  String
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  agentRunId String?
+  level      String    @default("info")
+  source     String    @default("system")
+  message    String
+  createdAt  DateTime  @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+model Download {
+  id        String    @id @default(cuid())
+  projectId String
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  size      Int       @default(0)
+  createdAt DateTime  @default(now())
+
+  @@index([projectId, createdAt])
+  @@index([userId, createdAt])
+}
