@@ -1,4 +1,4 @@
-const BASE_URL = '/api';
+const BASE_URL = 'https://devforge-ai-mcmt.onrender.com/api';
 
 let accessToken = null;
 let sessionToken = null;
