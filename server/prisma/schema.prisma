@@ -44,16 +44,21 @@ model Project {
   title       String
   description String
   stack       String
-  status      String       @default("completed")
-  ownerId     String
-  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  agents      AgentRun[]
-  files       ProjectFile[]
-  logs        BuildLog[]
-  downloads   Download[]
-  error       String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  status             String           @default("completed")
+  ownerId            String
+  owner              User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  agents             AgentRun[]
+  files              ProjectFile[]
+  logs               BuildLog[]
+  downloads          Download[]
+  validationRuns     ValidationRun[]
+  error              String?
+  validated          Boolean          @default(false)
+  validationStatus   String           @default("none")
+  validationAttempts Int              @default(0)
+  validationError    String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
   @@index([ownerId, createdAt])
   @@index([status])
@@ -116,4 +121,32 @@ model Download {
 
   @@index([projectId, createdAt])
   @@index([userId, createdAt])
+}
+
+model ValidationRun {
+  id          String            @id @default(cuid())
+  projectId   String
+  project     Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  attempt     Int               @default(1)
+  status      String            @default("running")
+  error       String?
+  startedAt   DateTime          @default(now())
+  completedAt DateTime?
+  steps       ValidationStep[]
+
+  @@index([projectId, attempt])
+}
+
+model ValidationStep {
+  id         String        @id @default(cuid())
+  runId      String
+  run        ValidationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  name       String
+  status     String        @default("pending")
+  message    String?
+  detail     String?
+  durationMs Int?
+  createdAt  DateTime      @default(now())
+
+  @@index([runId])
 }

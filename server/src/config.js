@@ -33,6 +33,13 @@ const config = {
   trustProxy: parseBool(process.env.TRUST_PROXY, false),
   logLevel: requireEnv('LOG_LEVEL', 'info'),
   corsOrigin: requireEnv('CORS_ORIGIN', '*'),
+  validationEnabled: parseBool(process.env.VALIDATION_ENABLED, true),
+  validationMaxRetries: parseInt(requireEnv('VALIDATION_MAX_RETRIES', '3'), 10),
+  validationCommandTimeoutMs: parseInt(requireEnv('VALIDATION_COMMAND_TIMEOUT_MS', '240000'), 10),
+  validationStartTimeoutMs: parseInt(requireEnv('VALIDATION_START_TIMEOUT_MS', '90000'), 10),
+  validationHealthTimeoutMs: parseInt(requireEnv('VALIDATION_HEALTH_TIMEOUT_MS', '10000'), 10),
+  validationAiFixEnabled: parseBool(process.env.VALIDATION_AI_FIX_ENABLED, true),
+  validationAllowUnvalidatedDownload: parseBool(process.env.VALIDATION_ALLOW_UNVALIDATED_DOWNLOAD, true),
 };
 
 module.exports = config;
