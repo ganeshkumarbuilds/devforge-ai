@@ -7,6 +7,7 @@ const previewService = require('../services/previewService');
 const logger = require('../utils/logger');
 const HttpError = require('../utils/httpError');
 const { requireOwnedProject } = require('../utils/projectAccess');
+const buildValidator = require('../services/validation/BuildValidator');
 
 const TOKEN_COOKIE = 'df_preview';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -45,7 +46,19 @@ async function getStatus(req, res) {
 async function start(req, res) {
   const { id } = req.params;
   await requireOwnedProject(id, req.userId);
-  const result = await previewService.start(id);
+
+  // Live Preview is only started after the Build Validation Pipeline passes.
+  const validation = await buildValidator.ensureValidated(id);
+  if (!validation.ok && !validation.allowedUnvalidated) {
+    const err = new HttpError(
+      409,
+      'This project has not passed build validation yet, so live preview cannot start. Run validation first.'
+    );
+    err.details = { kind: 'validation', report: validation.report };
+    throw err;
+  }
+
+  const result = await previewService.start(id, { install: !(validation.ok && !validation.skipped) });
   res.json({ ok: true, ...previewService.getStatus(id), error: result.error || undefined });
 }
 

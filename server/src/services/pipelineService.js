@@ -7,7 +7,7 @@ const { createAgents } = require('../agents');
 const { generatedDir } = require('../config');
 const { sleep } = require('../agents/baseAgent');
 const { writeLog } = require('./buildLogService');
-const { languageOf } = require('../utils/fileUtils');
+const { languageOf, IGNORED_DIRS } = require('../utils/fileUtils');
 
 const PROGRESS_THROTTLE_MS = 600;
 const OUTPUT_THROTTLE_MS = 700;
@@ -60,6 +60,8 @@ function createZip(projectId) {
   const rootDir = path.join(generatedDir, projectId);
   const walk = (dir, prefix) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      // Never ship dependencies or build artifacts in the exported ZIP.
+      if (entry.isDirectory() && IGNORED_DIRS.has(entry.name)) continue;
       const full = path.join(dir, entry.name);
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {

@@ -51,7 +51,9 @@ const config = {
   validationStartTimeoutMs: parseInt(requireEnv('VALIDATION_START_TIMEOUT_MS', '90000'), 10),
   validationHealthTimeoutMs: parseInt(requireEnv('VALIDATION_HEALTH_TIMEOUT_MS', '10000'), 10),
   validationAiFixEnabled: parseBool(process.env.VALIDATION_AI_FIX_ENABLED, true),
-  validationAllowUnvalidatedDownload: parseBool(process.env.VALIDATION_ALLOW_UNVALIDATED_DOWNLOAD, true),
+  // Export Protection: never ship an unvalidated project unless explicitly
+  // opted out by the operator.
+  validationAllowUnvalidatedDownload: parseBool(process.env.VALIDATION_ALLOW_UNVALIDATED_DOWNLOAD, false),
 };
 
 module.exports = config;

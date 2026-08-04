@@ -23,6 +23,9 @@ import {
   History,
   MonitorPlay,
   Rocket,
+  ShieldCheck,
+  ShieldAlert,
+  Wrench,
 } from 'lucide-react';
 import { projectsApi } from '../api/projects';
 import { useToast } from '../context/ToastContext';
@@ -83,6 +86,10 @@ export default function ProjectWorkspace() {
   const [deployOpen, setDeployOpen] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [busyAction, setBusyAction] = useState(null);
+  const [validation, setValidation] = useState(null);
+  const [validationRunning, setValidationRunning] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [validationOpen, setValidationOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -93,6 +100,8 @@ export default function ProjectWorkspace() {
       setFiles(data.files || []);
       setIsBuilding(data.isBuilding);
       setCounts(data.counts || {});
+      setValidation(data.validation || null);
+      setValidationRunning(Boolean(data.validationRunning));
       setError(null);
       return data;
     } catch (err) {
@@ -158,9 +167,35 @@ export default function ProjectWorkspace() {
       await downloadArtifact(() => projectsApi.downloadZip(projectId), 'project.zip');
       toast.success('Download started', 'Your project ZIP is on its way.');
     } catch (err) {
-      toast.error('Download failed', err.message);
+      if (err.details && err.details.kind === 'validation') {
+        setValidation(err.details);
+        setValidationOpen(true);
+        toast.error('Validation required', 'This project must pass build validation before it can be exported.');
+      } else {
+        toast.error('Download failed', err.message);
+      }
     } finally {
       setBusyAction(null);
+    }
+  };
+
+  const handleValidate = async () => {
+    if (validating || validationRunning) return;
+    setValidating(true);
+    setValidationRunning(true);
+    try {
+      const data = await projectsApi.validate(projectId);
+      setValidation(data);
+      toast.success(
+        data.ok ? 'Validation passed' : 'Validation failed',
+        data.ok ? 'Frontend builds and backend starts. The project is ready to export.' : 'See the validation report below for what still needs fixing.'
+      );
+    } catch (err) {
+      toast.error('Validation failed', err.message);
+    } finally {
+      setValidating(false);
+      setValidationRunning(false);
+      load();
     }
   };
 
@@ -319,6 +354,27 @@ export default function ProjectWorkspace() {
           </Badge>
           <Badge tone="violet">{project.stack || 'Auto'}</Badge>
           <Badge tone="blue">{counts.downloads ?? 0} downloads</Badge>
+          {project.validated ? (
+            <Badge tone="green">
+              <ShieldCheck className="mr-1 h-3.5 w-3.5" />
+              Validated
+            </Badge>
+          ) : project.validationStatus === 'failed' ? (
+            <Badge tone="red">
+              <ShieldAlert className="mr-1 h-3.5 w-3.5" />
+              Needs validation
+            </Badge>
+          ) : validationRunning || validating ? (
+            <Badge tone="amber">
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              Validating…
+            </Badge>
+          ) : (
+            <Badge tone="slate">
+              <ShieldAlert className="mr-1 h-3.5 w-3.5" />
+              Not validated
+            </Badge>
+          )}
         </div>
       </div>
 
@@ -347,6 +403,10 @@ export default function ProjectWorkspace() {
         <Button variant="secondary" onClick={handleRebuild} loading={rebuilding} disabled={isBuilding}>
           <RefreshCw className={cn('h-4 w-4', isBuilding && 'animate-spin')} />
           Rebuild
+        </Button>
+        <Button variant="secondary" onClick={handleValidate} loading={validating || validationRunning} disabled={isBuilding || !hasFiles}>
+          <Wrench className="h-4 w-4" />
+          {project.validated ? 'Re-validate' : 'Validate & Fix'}
         </Button>
         <Button variant="danger" onClick={() => setDeleteOpen(true)} className="ml-auto">
           <Trash2 className="h-4 w-4" />
@@ -395,6 +455,53 @@ export default function ProjectWorkspace() {
           <Button variant="danger" size="sm" onClick={handleRebuild} loading={rebuilding}>
             <RefreshCw className="h-4 w-4" /> Rebuild
           </Button>
+        </motion.div>
+      )}
+
+      {/* Validation in progress banner */}
+      {!isBuilding && (validationRunning || validating) && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4"
+        >
+          <Loader2 className="h-5 w-5 animate-spin text-amber-300" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-amber-200">Build validation in progress</p>
+            <p className="truncate text-xs text-amber-200/70">
+              Installing dependencies, building the frontend and booting the backend. This can take a few minutes.
+            </p>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Validation failure banner */}
+      {!isBuilding && !validationRunning && !validating && project.validated === false && project.validationStatus === 'failed' && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-start gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4"
+        >
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-rose-400" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-rose-300">Project needs validation</p>
+            <p className="mt-1 text-sm break-words text-rose-200/80">
+              {project.validationError || 'This project has not passed build validation and cannot be exported or previewed.'}
+            </p>
+            <p className="mt-1 text-xs text-rose-300/60">
+              The self-healing pipeline repairs missing files, broken imports and failing builds automatically — run Validate &amp; Fix.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button variant="danger" size="sm" onClick={handleValidate} loading={validating || validationRunning}>
+                <Wrench className="h-4 w-4" /> Validate &amp; Fix
+              </Button>
+              {validation && (
+                <Button variant="ghost" size="sm" onClick={() => setValidationOpen(true)}>
+                  View report
+                </Button>
+              )}
+            </div>
+          </div>
         </motion.div>
       )}
 
@@ -497,6 +604,68 @@ export default function ProjectWorkspace() {
         open={deployOpen}
         onClose={() => setDeployOpen(false)}
       />
+
+      {/* Validation report modal */}
+      <Modal
+        open={validationOpen}
+        onClose={() => setValidationOpen(false)}
+        title="Build Validation Report"
+        description={validation && validation.ok ? 'This project passed the Build Validation Pipeline.' : 'Issues found while validating this project.'}
+        size="lg"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setValidationOpen(false)}>Close</Button>
+            {!validation?.ok && (
+              <Button variant="danger" onClick={handleValidate} loading={validating || validationRunning}>
+                <Wrench className="h-4 w-4" /> Validate &amp; Fix
+              </Button>
+            )}
+          </>
+        }
+      >
+        {validation?.ok ? (
+          <div className="flex flex-col items-center gap-3 py-6 text-center">
+            <ShieldCheck className="h-12 w-12 text-emerald-400" />
+            <p className="text-sm text-slate-300">
+              Frontend builds successfully and backend starts. This project is ready to export and preview.
+            </p>
+            {typeof validation.attempts === 'number' && (
+              <p className="text-xs text-slate-500">Passed on attempt {validation.attempts}.</p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {(!validation?.issues || validation.issues.length === 0) && (
+              <p className="text-sm text-slate-400">No issues reported by the validator.</p>
+            )}
+            {validation?.issues?.map((issue, idx) => (
+              <div key={idx} className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-4">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 text-rose-400" />
+                  <p className="text-sm font-semibold text-rose-200">{issue.title}</p>
+                </div>
+                {issue.detail && <p className="mt-1.5 text-sm break-words whitespace-pre-wrap text-slate-300">{issue.detail}</p>}
+                {issue.log && (
+                  <pre className="mt-2 max-h-44 overflow-auto rounded-lg bg-black/40 p-3 text-xs leading-relaxed text-slate-400">
+                    {issue.log}
+                  </pre>
+                )}
+                {issue.suggestedFix && (
+                  <p className="mt-2 text-xs text-amber-300/90">Fix: {issue.suggestedFix}</p>
+                )}
+              </div>
+            ))}
+            {validation?.logs && validation.logs.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Build logs</p>
+                <pre className="max-h-56 overflow-auto rounded-xl bg-black/40 p-3 text-xs leading-relaxed text-slate-400">
+                  {validation.logs.join('\n')}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

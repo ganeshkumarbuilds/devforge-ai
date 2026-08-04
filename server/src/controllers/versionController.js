@@ -2,6 +2,7 @@ const prisma = require('../lib/prisma');
 const HttpError = require('../utils/httpError');
 const { getLogs } = require('../services/buildLogService');
 const previewService = require('../services/previewService');
+const buildValidator = require('../services/validation/BuildValidator');
 const { requireOwnedProject } = require('../utils/projectAccess');
 const {
   createVersion,
@@ -55,9 +56,14 @@ async function restore(req, res) {
   const { id, versionId } = req.params;
   await requireOwnedProject(id, req.userId);
   const result = await restoreVersion(id, versionId);
+  // Restoring swaps the project's files — the previous validation result is no
+  // longer valid. Invalidate so exports/previews re-validate before release.
+  await buildValidator.invalidateValidation(id).catch((err) => console.error('[Validation] invalidate after restore failed', err.message));
   // Keep disk + live preview in sync with the restored snapshot.
   await previewService.syncProjectToDisk(id).catch((err) => console.error('[Preview] sync after restore failed', err.message));
   previewService.restart(id, { reinstall: false }).catch((err) => console.error('[Preview] restart after restore failed', err.message));
+  // Kick off background re-validation so the project becomes exportable again.
+  buildValidator.validateProject(id).catch((err) => console.error('[Validation] revalidate after restore failed', err.message));
   res.json({ ok: true, ...result });
 }
 

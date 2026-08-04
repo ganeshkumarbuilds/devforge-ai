@@ -35,6 +35,7 @@ function errorHandler(err, req, res, next) {
 
   res.status(status).json({
     error: message,
+    ...(err.details !== undefined ? { details: err.details } : {}),
   });
 }
 

@@ -47,6 +47,7 @@ export default function PreviewPanel({ projectId }) {
   const [loading, setLoading] = useState(true);
   const [iframeKey, setIframeKey] = useState(0);
   const [showTerminal, setShowTerminal] = useState(true);
+  const [validationBlocked, setValidationBlocked] = useState(null);
 
   const lastLogIndexRef = useRef(0);
   const logsBottomRef = useRef(null);
@@ -118,11 +119,17 @@ export default function PreviewPanel({ projectId }) {
 
   const handleStart = async () => {
     setBusy('start');
+    setValidationBlocked(null);
     try {
       await projectsApi.previewStart(projectId);
       toast.success('Preview starting', 'Installing dependencies and booting the server…');
     } catch (err) {
-      toast.error('Preview failed', err.message);
+      if (err.details && err.details.kind === 'validation') {
+        setValidationBlocked(err.details.report);
+        toast.error('Validation required', 'This project must pass build validation before preview can start.');
+      } else {
+        toast.error('Preview failed', err.message);
+      }
     } finally {
       setBusy(null);
     }
@@ -178,6 +185,30 @@ export default function PreviewPanel({ projectId }) {
           )}
         </div>
       </div>
+
+      {/* Validation blocked */}
+      {validationBlocked && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-amber-200">Preview requires build validation</p>
+            <p className="mt-1 text-sm break-words text-amber-200/80">
+              This project has not passed the Build Validation Pipeline yet. Run validation from the project page first.
+            </p>
+            {validationBlocked.issues?.length > 0 && (
+              <ul className="mt-2 space-y-2">
+                {validationBlocked.issues.map((issue, idx) => (
+                  <li key={idx} className="rounded-lg bg-black/30 p-2.5">
+                    <p className="text-xs font-semibold text-rose-300">{issue.title}</p>
+                    {issue.detail && <p className="mt-1 break-words whitespace-pre-wrap text-xs text-slate-300">{issue.detail}</p>}
+                    {issue.suggestedFix && <p className="mt-1 text-[11px] text-amber-300/80">{issue.suggestedFix}</p>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Error detail */}
       {hasError && (

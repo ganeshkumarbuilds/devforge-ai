@@ -11,6 +11,7 @@ const { createVersion } = require('../services/versionService');
 const { requireOwnedProject } = require('../utils/projectAccess');
 const { slugify } = require('../utils/fileUtils');
 const previewService = require('../services/previewService');
+const buildValidator = require('../services/validation/BuildValidator');
 
 const activePipelines = new Map();
 
@@ -19,7 +20,13 @@ async function maybeStartPreview(projectId) {
   if (!project || project.status !== 'completed') return;
   const count = await prisma.projectFile.count({ where: { projectId } });
   if (count === 0) return;
-  previewService.start(projectId).catch((err) => console.error('[Preview] auto-start failed', err.message));
+  // Build Validation Pipeline must pass before a preview is allowed to start.
+  const result = await buildValidator.validateProject(projectId);
+  if (!result.ok) {
+    console.warn(`[Preview] validation failed for ${projectId} — preview not started.`);
+    return;
+  }
+  previewService.start(projectId, { install: false }).catch((err) => console.error('[Preview] auto-start failed', err.message));
 }
 
 function projectSummary(p) {
@@ -30,6 +37,10 @@ function projectSummary(p) {
     stack: p.stack,
     status: p.status,
     error: p.error,
+    validated: p.validated,
+    validationStatus: p.validationStatus,
+    validationAttempts: p.validationAttempts,
+    validationError: p.validationError,
     fileCount: p._count ? p._count.files : undefined,
     agentCount: p._count ? p._count.agents : undefined,
     favorite: Boolean(p.favorite),
@@ -313,6 +324,8 @@ async function getProject(req, res) {
     files: project.files.map((f) => ({ path: f.path, content: f.content, language: f.language })),
     counts: { downloads: project._count.downloads, logs: project._count.logs },
     preview: previewService.getStatus(id),
+    validation: await buildValidator.getValidationReport(id),
+    validationRunning: buildValidator.isValidationRunning(id),
   });
 }
 
@@ -369,9 +382,10 @@ async function rebuildProject(req, res) {
   await prisma.agentRun.deleteMany({ where: { projectId: id } });
   await prisma.projectFile.deleteMany({ where: { projectId: id } });
   await prisma.buildLog.deleteMany({ where: { projectId: id } });
+  await prisma.validationRun.deleteMany({ where: { projectId: id } });
   await prisma.project.update({
     where: { id },
-    data: { status: 'running', error: null, title: 'Generating…' },
+    data: { status: 'running', error: null, title: 'Generating…', validated: false, validationStatus: 'none', validationError: null },
   });
 
   const pipeline = new Pipeline({ projectId: id, prompt: project.description, stack: project.stack });
@@ -414,6 +428,18 @@ async function downloadZip(req, res) {
   const files = await prisma.projectFile.findMany({ where: { projectId: id }, select: { path: true, content: true } });
   if (!files.length) {
     throw new HttpError(404, 'No generated files yet');
+  }
+
+  // Export Protection: never allow exporting a project that has not passed the
+  // Build Validation Pipeline (frontend builds + backend starts).
+  const validation = await buildValidator.ensureValidated(id);
+  if (!validation.ok && !validation.allowedUnvalidated) {
+    const err = new HttpError(
+      409,
+      'This project has not passed build validation yet and cannot be exported. Run validation first, then retry the download.'
+    );
+    err.details = { kind: 'validation', report: validation.report };
+    throw err;
   }
 
   for (const f of files) {
@@ -508,6 +534,13 @@ async function getLogs(req, res) {
   res.json({ logs });
 }
 
+async function validate(req, res) {
+  const { id } = req.params;
+  await requireOwnedProject(id, req.userId);
+  const result = await buildValidator.validateProject(id, { force: true });
+  res.json({ ok: result.ok, ...(result.report || {}), durationMs: result.durationMs });
+}
+
 async function getStatus(req, res) {
   const running = await prisma.project.findMany({
     where: { ownerId: req.userId, status: 'running' },
@@ -532,5 +565,6 @@ module.exports = {
   exportLogs,
   exportDocs,
   getLogs,
+  validate,
   getStatus,
 };

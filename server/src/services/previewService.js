@@ -271,7 +271,8 @@ function runChild(session, { cmd, args, source, timeoutMs, timeoutMessage }) {
       env: buildChildEnv(session.port),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      detached: process.platform !== 'win32',
+      // Node >=20.19 rejects spawning .cmd/.bat directly; run through a shell.
+      shell: process.platform === 'win32',
     });
 
     const timer = setTimeout(() => {
@@ -357,7 +358,8 @@ async function start(projectId, { install = true } = {}) {
       env: buildChildEnv(port),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      detached: process.platform !== 'win32',
+      // Node >=20.19 rejects spawning .cmd/.bat directly; run through a shell.
+      shell: process.platform === 'win32',
     });
     session.pid = session.process.pid;
 

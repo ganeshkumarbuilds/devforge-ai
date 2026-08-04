@@ -26,9 +26,10 @@ export function clearTokens() {
 }
 
 class ApiError extends Error {
-  constructor(status, message) {
+  constructor(status, message, details = null) {
     super(message);
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -76,7 +77,8 @@ export async function apiFetch(path, { method = 'GET', body, headers = {}, timeo
       const message = data && typeof data === 'object' && data.error
         ? data.error
         : `Request failed (${res.status})`;
-      throw new ApiError(res.status, message);
+      const details = data && typeof data === 'object' && data.details ? data.details : null;
+      throw new ApiError(res.status, message, details);
     }
 
     return data;
@@ -114,11 +116,13 @@ export async function apiBlob(path, { method = 'GET', timeout = 60000 } = {}) {
 
     if (!res.ok) {
       let message = `Request failed (${res.status})`;
+      let details = null;
       try {
         const data = await res.json();
         if (data && data.error) message = data.error;
+        if (data && data.details) details = data.details;
       } catch { /* keep default */ }
-      throw new ApiError(res.status, message);
+      throw new ApiError(res.status, message, details);
     }
 
     const disposition = res.headers.get('content-disposition') || '';
