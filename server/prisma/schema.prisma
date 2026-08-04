@@ -12,16 +12,18 @@ datasource db {
 }
 
 model User {
-  id           String      @id @default(cuid())
-  email        String      @unique
-  passwordHash String
-  name         String
-  settings     Json?
-  projects     Project[]
-  sessions     Session[]
-  downloads    Download[]
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  name          String
+  settings      Json?
+  projects      Project[]
+  sessions      Session[]
+  downloads     Download[]
+  conversations Conversation[]
+  reviews        CodeReview[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 }
 
 model Session {
@@ -52,11 +54,13 @@ model Project {
   logs               BuildLog[]
   downloads          Download[]
   validationRuns     ValidationRun[]
+  versions           ProjectVersion[]
   error              String?
   validated          Boolean          @default(false)
   validationStatus   String           @default("none")
   validationAttempts Int              @default(0)
   validationError    String?
+  favorite           Boolean          @default(false)
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -149,4 +153,64 @@ model ValidationStep {
   createdAt  DateTime      @default(now())
 
   @@index([runId])
+}
+
+model Conversation {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String        @default("New conversation")
+  messages  ChatMessage[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+model ChatMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+model CodeReview {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  status    String    @default("processing")
+  summary   String?
+  scores    Json?
+  results   Json?
+  files     Json?
+  error     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model ProjectVersion {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version   String
+  number    Int
+  prompt    String
+  model     String   @default("")
+  summary   String?
+  status    String   @default("completed")
+  notes     String?
+  files     Json?
+  logs      Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, number])
+  @@index([projectId, createdAt])
 }

@@ -1,47 +1,40 @@
-const { BaseAgent, normalizeFiles } = require('./baseAgent');
+const { BaseAgent } = require('./baseAgent');
+const deploymentService = require('../services/deploymentService');
 
-const SYSTEM_PROMPT = `You are the Deployment Engineer agent. Create deployment configuration files.
+const PLATFORMS = ['Render', 'Railway', 'Vercel', 'Netlify'];
 
-You MUST respond with ONLY a single JSON object with no markdown fences, no explanations, no preamble, and no extra text:
-{
-  "files": [
-    { "path": "Dockerfile", "content": "..." },
-    { "path": "docker-compose.yml", "content": "..." }
-  ],
-  "summary": "1 sentence summary"
-}
-
-Rules:
-- Generate 2-3 deployment files (Dockerfile, docker-compose.yml, etc.).
-- CRITICAL: Escape all newlines in file content strings as \\n and double quotes as \\\".
-- Return STRICT JSON ONLY.`;
-
-function validate(parsed) {
-  if (!parsed || typeof parsed !== 'object') throw new Error('Response is not a JSON object');
-  if (!Array.isArray(parsed.files) || parsed.files.length === 0) throw new Error('Response must include a non-empty "files" array');
-}
-
+/**
+ * Deterministic deployment generator. Replaces the LLM-based approach with a
+ * structure-aware generator so every project receives production-ready config:
+ * Dockerfile, docker-compose, GitHub Actions, NGINX, env files, deployment
+ * scripts, and platform configs for Render, Railway, Vercel and Netlify.
+ */
 class DeploymentEngineerAgent extends BaseAgent {
   constructor() {
     super({ role: 'deployment-engineer', displayName: 'Deployment Engineer', icon: 'rocket', color: '#f87171' });
   }
 
-  async run(context, callbacks) {
-    const spec = {
-      title: context.prd?.title,
-      stack: context.prd?.stack,
-      filePaths: Object.keys(context.files),
+  async run(context, callbacks = {}) {
+    const title = context.prd?.title || context.architect?.title || 'Generated App';
+    const progress = async (text) => {
+      if (callbacks.onProgress) await callbacks.onProgress(text);
     };
-    const messages = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: `Create deployment config for:\n${JSON.stringify(spec, null, 2)}` },
-    ];
-    const { parsed } = await this.runJson({ messages, temperature: 0.3, validateFn: validate, ...callbacks });
-    const files = normalizeFiles(parsed);
-    for (const f of files) {
+
+    await progress('Analyzing generated project structure…');
+    const result = deploymentService.generate(context.files, { title, stack: context.prd?.stack });
+
+    for (const f of result.files) {
       context.files[f.path] = f.content;
     }
-    context.deployment = { summary: parsed.summary || '', files };
+
+    await progress(`Generated ${result.files.length} deployment artifacts across ${PLATFORMS.join(', ')}.`);
+
+    context.deployment = {
+      summary: result.summary,
+      files: result.files,
+      platforms: PLATFORMS,
+      analysis: result.analysis,
+    };
     return context;
   }
 }

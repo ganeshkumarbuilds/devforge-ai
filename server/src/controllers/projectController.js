@@ -7,8 +7,20 @@ const { generatedDir } = require('../config');
 const { isConfigured, getModel } = require('../services/openrouterService');
 const { getLogs: fetchLogs } = require('../services/buildLogService');
 const { buildLogsMarkdown, projectMarkdown, buildPdf } = require('../services/exportService');
+const { createVersion } = require('../services/versionService');
+const { requireOwnedProject } = require('../utils/projectAccess');
+const { slugify } = require('../utils/fileUtils');
+const previewService = require('../services/previewService');
 
 const activePipelines = new Map();
+
+async function maybeStartPreview(projectId) {
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { status: true } });
+  if (!project || project.status !== 'completed') return;
+  const count = await prisma.projectFile.count({ where: { projectId } });
+  if (count === 0) return;
+  previewService.start(projectId).catch((err) => console.error('[Preview] auto-start failed', err.message));
+}
 
 function projectSummary(p) {
   return {
@@ -20,6 +32,7 @@ function projectSummary(p) {
     error: p.error,
     fileCount: p._count ? p._count.files : undefined,
     agentCount: p._count ? p._count.agents : undefined,
+    favorite: Boolean(p.favorite),
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
@@ -81,14 +94,27 @@ async function generate(req, res) {
         path: p,
         content,
       }));
-      await prisma.projectFile.createMany({
-        data: files.map((f) => ({
-          projectId: project.id,
-          path: f.path,
-          content: f.content,
-          language: languageOf(f.path),
-        })),
+      if (files.length > 0) {
+        await prisma.projectFile.createMany({
+          data: files.map((f) => ({
+            projectId: project.id,
+            path: f.path,
+            content: f.content,
+            language: languageOf(f.path),
+          })),
+          skipDuplicates: true,
+        });
+      }
+      const logs = await fetchLogs({ projectId: project.id, limit: 2000 });
+      await createVersion({
+        projectId: project.id,
+        prompt: prompt.trim(),
+        model: getModel(),
+        files,
+        logs,
+        summary: `Snapshot from generation "${project.title}"`,
       });
+      await maybeStartPreview(project.id);
     } catch (err) {
       console.error('[Pipeline]', err);
     } finally {
@@ -147,6 +173,113 @@ async function listProjects(req, res) {
   });
 }
 
+function humanizeBytes(bytes) {
+  if (!bytes || bytes <= 0) return { value: 0, unit: 'B' };
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let v = bytes;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024;
+    u += 1;
+  }
+  return { value: Math.round(v * 10) / 10, unit: units[u] };
+}
+
+async function getStats(req, res) {
+  const ownerId = req.userId;
+
+  const [projects, agentRuns, fileRows, favorites] = await Promise.all([
+    prisma.project.findMany({
+      where: { ownerId },
+      select: { id: true, createdAt: true, status: true },
+    }),
+    prisma.agentRun.findMany({
+      where: { project: { ownerId }, status: 'completed', startedAt: { not: null }, completedAt: { not: null } },
+      select: { projectId: true, startedAt: true, completedAt: true, output: true },
+    }),
+    prisma.projectFile.findMany({
+      where: { project: { ownerId } },
+      select: { content: true },
+    }),
+    prisma.project.count({ where: { ownerId, favorite: true } }),
+  ]);
+
+  const statusCounts = { running: 0, completed: 0, failed: 0 };
+  for (const p of projects) {
+    if (Object.prototype.hasOwnProperty.call(statusCounts, p.status)) statusCounts[p.status] += 1;
+  }
+  const finished = statusCounts.completed + statusCounts.failed;
+  const successRate = finished > 0 ? Math.round((statusCounts.completed / finished) * 100) : null;
+
+  // Average per-project build time (sum of its agent-run durations).
+  const perProject = new Map();
+  for (const r of agentRuns) {
+    const dur = new Date(r.completedAt) - new Date(r.startedAt);
+    if (!(dur > 0)) continue;
+    perProject.set(r.projectId, (perProject.get(r.projectId) || 0) + dur);
+  }
+  const durations = [...perProject.values()];
+  const avgBuildTimeMs = durations.length
+    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+    : null;
+
+  // AI usage estimate from stored agent output (approx tokens as chars/4).
+  const aiCharacters = agentRuns.reduce((sum, r) => sum + (r.output ? r.output.length : 0), 0);
+  const aiTokens = Math.round(aiCharacters / 4);
+
+  let storageBytes = 0;
+  for (const f of fileRows) storageBytes += Buffer.byteLength(f.content || '', 'utf8');
+
+  // Last 14 days of build activity for the history chart.
+  const history = [];
+  const now = new Date();
+  const dayMs = 86400000;
+  for (let d = 13; d >= 0; d -= 1) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - d);
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() - d + 1);
+    let completed = 0;
+    let failed = 0;
+    let total = 0;
+    for (const p of projects) {
+      const t = new Date(p.createdAt);
+      if (t >= day && t < next) {
+        total += 1;
+        if (p.status === 'completed') completed += 1;
+        else if (p.status === 'failed') failed += 1;
+      }
+    }
+    history.push({
+      date: day.toISOString().slice(0, 10),
+      total,
+      completed,
+      failed,
+    });
+  }
+
+  res.json({
+    counts: statusCounts,
+    totalProjects: projects.length,
+    successRate,
+    avgBuildTimeMs,
+    aiUsage: { tokens: aiTokens, agentRuns: agentRuns.length },
+    storage: humanizeBytes(storageBytes),
+    storageBytes,
+    favorites,
+    history,
+  });
+}
+
+async function toggleFavorite(req, res) {
+  const { id } = req.params;
+  const project = await requireOwnedProject(id, req.userId);
+  const updated = await prisma.project.update({
+    where: { id },
+    data: { favorite: !project.favorite },
+    select: { id: true, favorite: true },
+  });
+  res.json({ favorite: updated.favorite });
+}
+
 async function getProject(req, res) {
   const { id } = req.params;
   const project = await prisma.project.findFirst({
@@ -179,16 +312,17 @@ async function getProject(req, res) {
     fileTree: toFileTree(project.files),
     files: project.files.map((f) => ({ path: f.path, content: f.content, language: f.language })),
     counts: { downloads: project._count.downloads, logs: project._count.logs },
+    preview: previewService.getStatus(id),
   });
 }
 
 async function deleteProject(req, res) {
   const { id } = req.params;
-  const project = await prisma.project.findFirst({ where: { id, ownerId: req.userId } });
-  if (!project) throw new HttpError(404, 'Project not found');
+  const project = await requireOwnedProject(id, req.userId);
 
   const pipeline = activePipelines.get(id);
   if (pipeline) pipeline.abort();
+  await previewService.stop(id).catch(() => {});
 
   await prisma.project.delete({ where: { id } });
   await fsp.rm(path.join(generatedDir, id), { recursive: true, force: true }).catch(() => {});
@@ -198,8 +332,7 @@ async function deleteProject(req, res) {
 
 async function updateProject(req, res) {
   const { id } = req.params;
-  const project = await prisma.project.findFirst({ where: { id, ownerId: req.userId } });
-  if (!project) throw new HttpError(404, 'Project not found');
+  const project = await requireOwnedProject(id, req.userId);
 
   const { title, description, stack } = req.body || {};
   const data = {};
@@ -228,8 +361,7 @@ async function updateProject(req, res) {
 
 async function rebuildProject(req, res) {
   const { id } = req.params;
-  const project = await prisma.project.findFirst({ where: { id, ownerId: req.userId } });
-  if (!project) throw new HttpError(404, 'Project not found');
+  const project = await requireOwnedProject(id, req.userId);
   if (activePipelines.get(id)) {
     throw new HttpError(409, 'Project is already building');
   }
@@ -249,9 +381,22 @@ async function rebuildProject(req, res) {
     try {
       await pipeline.run();
       const files = Object.entries(pipeline.context.files).map(([p, content]) => ({ path: p, content }));
-      await prisma.projectFile.createMany({
-        data: files.map((f) => ({ projectId: id, path: f.path, content: f.content, language: languageOf(f.path) })),
+      if (files.length > 0) {
+        await prisma.projectFile.createMany({
+          data: files.map((f) => ({ projectId: id, path: f.path, content: f.content, language: languageOf(f.path) })),
+          skipDuplicates: true,
+        });
+      }
+      const logs = await fetchLogs({ projectId: id, limit: 2000 });
+      await createVersion({
+        projectId: id,
+        prompt: project.description,
+        model: getModel(),
+        files,
+        logs,
+        summary: `Snapshot from rebuild`,
       });
+      await maybeStartPreview(id);
     } catch (err) {
       console.error('[Rebuild Pipeline]', err);
     } finally {
@@ -264,8 +409,7 @@ async function rebuildProject(req, res) {
 
 async function downloadZip(req, res) {
   const { id } = req.params;
-  const project = await prisma.project.findFirst({ where: { id, ownerId: req.userId } });
-  if (!project) throw new HttpError(404, 'Project not found');
+  const project = await requireOwnedProject(id, req.userId);
 
   const files = await prisma.projectFile.findMany({ where: { projectId: id }, select: { path: true, content: true } });
   if (!files.length) {
@@ -281,7 +425,7 @@ async function downloadZip(req, res) {
   }
 
   const buffer = await createZipBuffer(id);
-  const slug = project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+  const slug = slugify(project.title);
 
   await prisma.download.create({ data: { projectId: id, userId: req.userId, kind: 'zip', size: buffer.length } }).catch(() => {});
 
@@ -296,11 +440,10 @@ async function downloadZip(req, res) {
 async function exportLogs(req, res) {
   const { id } = req.params;
   const { format = 'markdown' } = req.query;
-  const project = await prisma.project.findFirst({ where: { id, ownerId: req.userId } });
-  if (!project) throw new HttpError(404, 'Project not found');
+  const project = await requireOwnedProject(id, req.userId);
 
   const md = await buildLogsMarkdown(project);
-  const slug = project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+  const slug = slugify(project.title);
 
   if (format === 'pdf') {
     const buffer = await buildPdf(`Build Logs — ${project.title}`, md);
@@ -331,7 +474,7 @@ async function exportDocs(req, res) {
   if (!project) throw new HttpError(404, 'Project not found');
 
   const md = await projectMarkdown(project, project.agents, project.files);
-  const slug = project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+  const slug = slugify(project.title);
 
   if (format === 'pdf') {
     const buffer = await buildPdf(project.title, md);
@@ -354,8 +497,7 @@ async function exportDocs(req, res) {
 
 async function getLogs(req, res) {
   const { id } = req.params;
-  const project = await prisma.project.findFirst({ where: { id, ownerId: req.userId } });
-  if (!project) throw new HttpError(404, 'Project not found');
+  const project = await requireOwnedProject(id, req.userId);
 
   const { after, limit } = req.query;
   const logs = await fetchLogs({
@@ -380,6 +522,8 @@ async function getStatus(req, res) {
 module.exports = {
   generate,
   listProjects,
+  getStats,
+  toggleFavorite,
   getProject,
   updateProject,
   deleteProject,

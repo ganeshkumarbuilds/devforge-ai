@@ -9,6 +9,8 @@ export const projectsApi = {
     const q = qs.toString();
     return apiFetch(`/projects${q ? `?${q}` : ''}`);
   },
+  stats: () => apiFetch('/projects/stats'),
+  toggleFavorite: (id) => apiFetch(`/projects/${id}/favorite`, { method: 'PATCH' }),
   get: (id) => apiFetch(`/projects/${id}`),
   generate: (data) => apiFetch('/projects/generate', { method: 'POST', body: data, timeout: 20000 }),
   update: (id, data) => apiFetch(`/projects/${id}`, { method: 'PATCH', body: data }),
@@ -19,6 +21,18 @@ export const projectsApi = {
   downloadZip: (id) => apiBlob(`/projects/${id}/download`),
   exportLogs: (id, format = 'markdown') => apiBlob(`/projects/${id}/export/logs?format=${format}`),
   exportDocs: (id, format = 'markdown') => apiBlob(`/projects/${id}/export/docs?format=${format}`),
+  listVersions: (id) => apiFetch(`/projects/${id}/versions`),
+  getVersion: (id, versionId) => apiFetch(`/projects/${id}/versions/${versionId}`),
+  createVersion: (id, data) => apiFetch(`/projects/${id}/versions`, { method: 'POST', body: data }),
+  restoreVersion: (id, versionId) => apiFetch(`/projects/${id}/versions/${versionId}/restore`, { method: 'POST' }),
+  diffVersions: (id, versionId, compareId) => apiFetch(`/projects/${id}/versions/${versionId}/diff/${compareId}`),
+  migration: (id, versionId) => apiFetch(`/projects/${id}/versions/${versionId}/migration`, { timeout: 120000 }),
+  previewStatus: (id) => apiFetch(`/projects/${id}/preview/status`),
+  previewStart: (id) => apiFetch(`/projects/${id}/preview/start`, { method: 'POST' }),
+  previewStop: (id) => apiFetch(`/projects/${id}/preview/stop`, { method: 'POST' }),
+  previewLogs: (id, after) => apiFetch(`/projects/${id}/preview/logs${after ? `?after=${after}` : ''}`),
+  deployment: (id) => apiFetch(`/projects/${id}/deployment`),
+  downloadDeployment: (id) => apiBlob(`/projects/${id}/export/deployment`),
 };
 
 export const aiApi = {

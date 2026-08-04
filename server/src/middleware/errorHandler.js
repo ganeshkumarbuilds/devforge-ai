@@ -17,6 +17,12 @@ function errorHandler(err, req, res, next) {
   } else if (err.name === 'PrismaClientValidationError') {
     status = 400;
     message = 'Invalid data sent to the database';
+  } else if (err.name === 'MulterError') {
+    status = 400;
+    if (err.code === 'LIMIT_FILE_SIZE') message = 'File too large (max 25 MB per file)';
+    else if (err.code === 'LIMIT_FILE_COUNT') message = 'Too many files uploaded';
+    else message = `Upload error: ${err.code || err.message}`;
+    logger.warn(`[Upload ${err.code}] ${req.method} ${req.originalUrl}`);
   } else if (status >= 500) {
     message = 'Internal server error';
   }

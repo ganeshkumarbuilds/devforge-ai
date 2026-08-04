@@ -108,6 +108,54 @@ async function chat({ messages, options = {}, onProgress }) {
 }
 
 /**
+ * Stream a chat completion through OpenRouter.
+ * Yields an object with either `{ delta }` (a partial token) or `{ done: true, content }`.
+ * @param {Object} opts
+ * @param {Array} opts.messages Array of { role, content }
+ * @param {Object} opts.options Chat options (temperature, max_tokens, etc.)
+ */
+async function* streamChat({ messages, options = {}, signal }) {
+  if (!isConfigured()) {
+    throw new OpenRouterError(
+      'OpenRouter is not configured',
+      'Set OPENROUTER_API_KEY and OPENROUTER_MODEL in server/.env and restart the server.'
+    );
+  }
+
+  const payload = {
+    model: openrouterModel,
+    messages,
+    stream: true,
+    temperature: options.temperature ?? 0.7,
+    max_tokens: options.max_tokens ?? options.num_predict ?? agentMaxTokens,
+  };
+
+  try {
+    const stream = await client.chat.completions.create({ ...payload, signal });
+    let fullText = '';
+    for await (const chunk of stream) {
+      if (signal && signal.aborted) break;
+      const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta
+        ? chunk.choices[0].delta.content
+        : null;
+      if (delta) {
+        fullText += delta;
+        yield { delta };
+      }
+    }
+    yield { done: true, content: fullText.trim() };
+  } catch (err) {
+    if (signal && signal.aborted) {
+      throw new OpenRouterError('Request aborted', String(err), 'aborted');
+    }
+    const status = err.status || (err.response && err.response.status);
+    const message = toErrorMessage(err);
+    logger.error(`[OpenRouter] Stream failed${status ? ` (HTTP ${status})` : ''}: ${message}`);
+    throw new OpenRouterError(message, err.message || String(err), status ? String(status) : 'network');
+  }
+}
+
+/**
  * Ask the model to produce a code block (fenced). Returns extracted block or raw text.
  */
 function extractCodeBlock(content) {
@@ -123,4 +171,4 @@ function stripFences(content) {
     .trim();
 }
 
-module.exports = { client, chat, isConfigured, getModel, extractCodeBlock, stripFences, OpenRouterError, toErrorMessage };
+module.exports = { client, chat, streamChat, isConfigured, getModel, extractCodeBlock, stripFences, OpenRouterError, toErrorMessage };

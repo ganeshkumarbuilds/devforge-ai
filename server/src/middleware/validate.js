@@ -34,10 +34,31 @@ const generateRules = [
   body('stack').optional({ values: 'falsy' }).trim().isLength({ min: 1, max: 100 }).withMessage('Stack name too long'),
 ];
 
+const createConversationRules = [
+  body('title').optional({ values: 'falsy' }).trim().isLength({ min: 1, max: 80 }).withMessage('Title must be 1-80 characters'),
+];
+
+const renameConversationRules = [
+  body('title').trim().isLength({ min: 1, max: 80 }).withMessage('Title must be 1-80 characters'),
+];
+
+const chatMessageRules = [
+  body('content').trim().isLength({ min: 1, max: 12000 }).withMessage('Message must be 1-12000 characters'),
+];
+
+const aiToolRunRules = [
+  body('tool').trim().isLength({ min: 1, max: 80 }).withMessage('A tool id is required'),
+  body('messages').isArray({ min: 1 }).withMessage('At least one message is required'),
+];
+
 module.exports = {
   run,
   registerRules,
   loginRules,
   updateSettingsRules,
   generateRules,
+  createConversationRules,
+  renameConversationRules,
+  chatMessageRules,
+  aiToolRunRules,
 };

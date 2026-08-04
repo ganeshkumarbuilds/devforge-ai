@@ -20,6 +20,9 @@ import {
   Terminal,
   LayoutGrid,
   Activity,
+  History,
+  MonitorPlay,
+  Rocket,
 } from 'lucide-react';
 import { projectsApi } from '../api/projects';
 import { useToast } from '../context/ToastContext';
@@ -31,6 +34,9 @@ import FileExplorer from '../components/project/FileExplorer';
 import FileViewer from '../components/project/FileViewer';
 import Console from '../components/project/Console';
 import ActivityLog from '../components/project/ActivityLog';
+import VersionsPanel from '../components/project/VersionsPanel';
+import PreviewPanel from '../components/project/PreviewPanel';
+import DeploymentModal from '../components/project/DeploymentModal';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
@@ -38,7 +44,9 @@ import { FullPageLoader } from '../components/ui/Spinner';
 
 const TABS = [
   { key: 'overview', label: 'Build', icon: LayoutGrid },
+  { key: 'preview', label: 'Preview', icon: MonitorPlay },
   { key: 'files', label: 'Files', icon: FileCode2 },
+  { key: 'versions', label: 'Versions', icon: History },
   { key: 'console', label: 'Console', icon: Terminal },
   { key: 'activity', label: 'Activity', icon: Activity },
 ];
@@ -72,6 +80,7 @@ export default function ProjectWorkspace() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deployOpen, setDeployOpen] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [busyAction, setBusyAction] = useState(null);
 
@@ -194,6 +203,10 @@ export default function ProjectWorkspace() {
     } finally {
       setRebuilding(false);
     }
+  };
+
+  const handleVersionRestored = () => {
+    load();
   };
 
   const handleDelete = async () => {
@@ -327,6 +340,10 @@ export default function ProjectWorkspace() {
           <FileDown className="h-4 w-4" />
           Export logs
         </Button>
+        <Button variant="secondary" onClick={() => setDeployOpen(true)}>
+          <Rocket className="h-4 w-4" />
+          Deploy
+        </Button>
         <Button variant="secondary" onClick={handleRebuild} loading={rebuilding} disabled={isBuilding}>
           <RefreshCw className={cn('h-4 w-4', isBuilding && 'animate-spin')} />
           Rebuild
@@ -359,6 +376,27 @@ export default function ProjectWorkspace() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Generation failure banner */}
+      {!isBuilding && project.status === 'failed' && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-start gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4"
+        >
+          <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-rose-400" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-rose-300">Generation failed</p>
+            <p className="mt-1 text-sm break-words text-rose-200/80">
+              {project.error || 'The AI pipeline could not generate this project.'}
+            </p>
+            <p className="mt-1 text-xs text-rose-300/60">Open the Console tab for the full build log, then try Rebuilding.</p>
+          </div>
+          <Button variant="danger" size="sm" onClick={handleRebuild} loading={rebuilding}>
+            <RefreshCw className="h-4 w-4" /> Rebuild
+          </Button>
+        </motion.div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 overflow-x-auto rounded-xl border border-white/[0.06] bg-base-900/60 p-1">
@@ -401,6 +439,10 @@ export default function ProjectWorkspace() {
             </div>
           )}
 
+          {tab === 'preview' && (
+            <PreviewPanel projectId={projectId} />
+          )}
+
           {tab === 'files' && (
             <div className="grid h-[70vh] gap-0 overflow-hidden rounded-2xl border border-white/[0.06] lg:grid-cols-[280px_1fr]">
               <div className="border-b border-white/[0.06] bg-base-900/60 p-3 lg:border-b-0 lg:border-r">
@@ -410,6 +452,10 @@ export default function ProjectWorkspace() {
                 <FileViewer file={selectedFileObj} />
               </div>
             </div>
+          )}
+
+          {tab === 'versions' && (
+            <VersionsPanel projectId={projectId} onRestored={handleVersionRestored} />
           )}
 
           {tab === 'console' && (
@@ -444,6 +490,13 @@ export default function ProjectWorkspace() {
           Are you sure you want to delete <span className="font-semibold text-white">"{project.title}"</span>? This cannot be undone.
         </p>
       </Modal>
+
+      <DeploymentModal
+        projectId={projectId}
+        title={project.title}
+        open={deployOpen}
+        onClose={() => setDeployOpen(false)}
+      />
     </div>
   );
 }

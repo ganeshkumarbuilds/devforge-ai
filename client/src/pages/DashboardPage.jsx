@@ -1,19 +1,21 @@
-import { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import {
   Plus,
   FolderGit2,
-  Loader2,
-  CheckCircle2,
-  XCircle,
   Search,
   AlertTriangle,
-  Cpu,
   RefreshCw,
   Inbox,
   Trash2,
+  Timer,
+  HardDrive,
+  Gauge,
+  Star,
+  Cpu,
+  TrendingUp,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { projectsApi, aiApi } from '../api/projects';
@@ -24,7 +26,12 @@ import { ProjectCard } from '../components/project/ProjectCard';
 import { ProjectCardSkeleton } from '../components/ui/Skeleton';
 import Modal from '../components/ui/Modal';
 import Button from '../components/ui/Button';
-import { cn } from '../lib/utils';
+import StatCard from '../components/dashboard/StatCard';
+import FavoritesRow from '../components/dashboard/FavoritesRow';
+import RecentProjects from '../components/dashboard/RecentProjects';
+import BuildHistory from '../components/dashboard/BuildHistory';
+import UsagePanel from '../components/dashboard/UsagePanel';
+import { cn, formatDuration, formatNumber } from '../lib/utils';
 
 const FILTERS = [
   { key: '', label: 'All' },
@@ -32,20 +39,6 @@ const FILTERS = [
   { key: 'completed', label: 'Completed' },
   { key: 'failed', label: 'Failed' },
 ];
-
-function StatCard({ icon: Icon, label, value, tone, pulse }) {
-  return (
-    <div className="card-surface flex items-center gap-4 p-5">
-      <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl', tone)}>
-        <Icon className={cn('h-5 w-5', pulse && 'animate-pulse')} />
-      </div>
-      <div>
-        <p className="text-2xl font-extrabold text-white">{value}</p>
-        <p className="text-xs font-medium uppercase tracking-wider text-slate-500">{label}</p>
-      </div>
-    </div>
-  );
-}
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -56,9 +49,21 @@ export default function DashboardPage() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [aiReady, setAiReady] = useState(true);
+  const [stats, setStats] = useState(null);
   const [search, setSearch] = useState('');
 
-  const status = counts.running + counts.completed + counts.failed;
+  const loadStats = useCallback(async () => {
+    try {
+      const data = await projectsApi.stats();
+      setStats(data);
+    } catch {
+      /* stats are optional */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
 
   usePolling(async () => {
     try {
@@ -84,6 +89,16 @@ export default function DashboardPage() {
     return list;
   }, [projects, filters.status, search]);
 
+  const favorites = useMemo(() => projects.filter((p) => p.favorite), [projects]);
+  const recent = useMemo(() => projects.slice(0, 6), [projects]);
+  const buildSpark = useMemo(() => (stats?.history || []).map((d) => d.total), [stats]);
+  const successSpark = useMemo(
+    () => (stats?.history || []).map((d) => (d.total > 0 ? Math.round((d.completed / d.total) * 100) : 0)),
+    [stats]
+  );
+
+  const statusTotal = counts.running + counts.completed + counts.failed;
+
   const handleGenerate = async ({ prompt, stack }) => {
     setGenerating(true);
     try {
@@ -97,6 +112,16 @@ export default function DashboardPage() {
     }
   };
 
+  const handleToggleFavorite = async (project) => {
+    try {
+      await projectsApi.toggleFavorite(project.id);
+      refresh();
+      loadStats();
+    } catch (err) {
+      toast.error('Could not update favorite', err.message);
+    }
+  };
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -105,6 +130,7 @@ export default function DashboardPage() {
       toast.success('Project deleted', `"${deleteTarget.title}" was removed.`);
       setDeleteTarget(null);
       refresh();
+      loadStats();
     } catch (err) {
       toast.error('Delete failed', err.message);
     } finally {
@@ -134,15 +160,76 @@ export default function DashboardPage() {
       </motion.div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard icon={FolderGit2} label="Total projects" value={status} tone="bg-sky-500/15 text-sky-400" />
-        <StatCard icon={Loader2} label="Running" value={counts.running} tone="bg-indigo-500/15 text-accent-soft" pulse />
-        <StatCard icon={CheckCircle2} label="Completed" value={counts.completed} tone="bg-emerald-500/15 text-emerald-400" />
-        <StatCard icon={XCircle} label="Failed" value={counts.failed} tone="bg-rose-500/15 text-rose-400" />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+        <StatCard
+          icon={FolderGit2}
+          label="Projects"
+          value={statusTotal}
+          hint={`${counts.running} building now`}
+          tone="accent"
+          spark={buildSpark}
+          index={0}
+        />
+        <StatCard
+          icon={TrendingUp}
+          label="Success rate"
+          value={stats?.successRate != null ? `${stats.successRate}%` : '—'}
+          hint="of finished builds"
+          tone="emerald"
+          spark={successSpark}
+          index={1}
+        />
+        <StatCard
+          icon={Timer}
+          label="Generation time"
+          value={formatDuration(stats?.avgBuildTimeMs)}
+          hint="avg per project"
+          tone="sky"
+          index={2}
+        />
+        <StatCard
+          icon={Gauge}
+          label="AI usage"
+          value={`${formatNumber(stats?.aiUsage?.tokens ?? 0)}`}
+          hint={`${formatNumber(stats?.aiUsage?.agentRuns ?? 0)} calls`}
+          tone="violet"
+          index={3}
+        />
+        <StatCard
+          icon={HardDrive}
+          label="Storage used"
+          value={stats?.storage ? `${stats.storage.value} ${stats.storage.unit}` : '—'}
+          hint="on disk"
+          tone="amber"
+          index={4}
+        />
+      </div>
+
+      {/* Favorites */}
+      {favorites.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-base-800 text-amber-400">
+              <Star className="h-4.5 w-4.5 fill-amber-400" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white">Favorites</h2>
+              <p className="text-xs text-slate-500">Your pinned projects for quick access</p>
+            </div>
+          </div>
+          <FavoritesRow favorites={favorites} />
+        </div>
+      )}
+
+      {/* Analytics row */}
+      <div className="grid gap-5 lg:grid-cols-3">
+        <RecentProjects projects={recent} onViewAll={() => document.querySelector('#projects-section')?.scrollIntoView({ behavior: 'smooth' })} />
+        <BuildHistory history={stats?.history || []} />
+        <UsagePanel stats={stats} />
       </div>
 
       {/* Projects */}
-      <div className="space-y-5">
+      <div id="projects-section" className="scroll-mt-6 space-y-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-bold text-white">Your projects</h2>
@@ -213,11 +300,14 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-            <AnimatePresence>
-              {filtered.map((project, i) => (
-                <ProjectCard key={project.id} project={project} index={i} onDelete={setDeleteTarget} />
-              ))}
-            </AnimatePresence>
+            {filtered.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                onDelete={setDeleteTarget}
+                onToggleFavorite={handleToggleFavorite}
+              />
+            ))}
           </div>
         )}
       </div>

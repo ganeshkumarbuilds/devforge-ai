@@ -7,6 +7,7 @@ const { createAgents } = require('../agents');
 const { generatedDir } = require('../config');
 const { sleep } = require('../agents/baseAgent');
 const { writeLog } = require('./buildLogService');
+const { languageOf } = require('../utils/fileUtils');
 
 const PROGRESS_THROTTLE_MS = 600;
 const OUTPUT_THROTTLE_MS = 700;
@@ -305,18 +306,6 @@ async function persistGeneratedFiles(projectId, files) {
       })
     )
   );
-}
-
-function languageOf(filePath) {
-  const map = {
-    '.js': 'javascript', '.jsx': 'javascript', '.ts': 'typescript', '.tsx': 'typescript',
-    '.py': 'python', '.html': 'html', '.css': 'css', '.json': 'json', '.md': 'markdown',
-    '.sql': 'sql', '.yml': 'yaml', '.yaml': 'yaml', '.sh': 'shell', '.dockerfile': 'docker',
-  };
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.dockerfile') return map['.dockerfile'];
-  if (path.basename(filePath).toLowerCase() === 'dockerfile') return 'docker';
-  return map[ext] || '';
 }
 
 async function validateJsonFiles(projectId, files) {

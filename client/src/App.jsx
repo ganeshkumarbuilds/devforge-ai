@@ -4,6 +4,8 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import ProjectWorkspace from './pages/ProjectWorkspace';
+import AiWorkspace from './pages/AiWorkspace';
+import AiToolsPage from './pages/AiToolsPage';
 import SettingsPage from './pages/SettingsPage';
 import ProfilePage from './pages/ProfilePage';
 import NotFoundPage from './pages/NotFoundPage';
@@ -26,6 +28,8 @@ export default function App() {
       >
         <Route index element={<Navigate to="/app/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="workspace" element={<AiWorkspace />} />
+        <Route path="ai-tools" element={<AiToolsPage />} />
         <Route path="projects/:projectId" element={<ProjectWorkspace />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="profile" element={<ProfilePage />} />

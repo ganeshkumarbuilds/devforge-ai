@@ -1,17 +1,18 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { FolderGit2, FileCode2, Bot, ArrowRight, Loader2, AlertTriangle, MoreHorizontal, Trash2, Eye } from 'lucide-react';
+import { FolderGit2, FileCode2, Bot, ArrowRight, Loader2, AlertTriangle, MoreHorizontal, Trash2, Eye, Star } from 'lucide-react';
 import Card from '../ui/Card';
 import Badge from '../ui/Badge';
 import { cn, formatDate, truncate } from '../../lib/utils';
 import { useState } from 'react';
 
-export function ProjectCard({ project, index = 0, onDelete }) {
+export function ProjectCard({ project, index = 0, onDelete, onToggleFavorite }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const status = project.status;
   const tone = status === 'completed' ? 'green' : status === 'running' ? 'accent' : status === 'failed' ? 'red' : 'slate';
   const label = status === 'running' ? 'Building' : status;
+  const favorite = Boolean(project.favorite);
 
   return (
     <motion.div
@@ -39,13 +40,25 @@ export function ProjectCard({ project, index = 0, onDelete }) {
             </div>
           </div>
 
-          <div className="relative shrink-0">
+          <div className="relative flex shrink-0 items-center gap-1">
+            <button
+              onClick={() => onToggleFavorite?.(project)}
+              aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'}
+              className={cn(
+                'rounded-lg p-1.5 transition-all duration-200',
+                favorite
+                  ? 'text-amber-400 hover:bg-amber-500/10'
+                  : 'text-slate-500 hover:bg-white/5 hover:text-amber-300'
+              )}
+            >
+              <Star className={cn('h-[18px] w-[18px]', favorite && 'fill-amber-400')} />
+            </button>
             <button
               onClick={() => setMenuOpen((v) => !v)}
               className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/5 hover:text-slate-200"
               aria-label="Project options"
             >
-              <MoreHorizontal className="h-4.5 w-4.5 h-[18px] w-[18px]" />
+              <MoreHorizontal className="h-[18px] w-[18px]" />
             </button>
             {menuOpen && (
               <>

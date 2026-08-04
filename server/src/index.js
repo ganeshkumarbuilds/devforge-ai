@@ -8,7 +8,13 @@ const { notFound, errorHandler } = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
 const authRoutes = require('./routes/authRoutes');
 const projectRoutes = require('./routes/projectRoutes');
+const previewRoutes = require('./routes/previewRoutes');
+const previewController = require('./controllers/previewController');
+const previewService = require('./services/previewService');
 const openrouterRoutes = require('./routes/openrouterRoutes');
+const chatRoutes = require('./routes/chatRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
+const aiToolRoutes = require('./routes/aiToolRoutes');
 const { isConfigured, getModel } = require('./services/openrouterService');
 
 const app = express();
@@ -37,8 +43,14 @@ fs.mkdirSync(path.resolve(generatedDir), { recursive: true });
 
 app.get('/api/health', (req, res) => res.json({ ok: true, uptime: process.uptime(), ts: new Date().toISOString() }));
 app.use('/api/auth', authRoutes);
+// Preview must be mounted before project routes: its proxy bypasses the JWT
+// header auth (the iframe cannot send one) and uses its own preview token.
+app.use('/api/projects', previewRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/ai', openrouterRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/ai-tools', aiToolRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
@@ -53,11 +65,19 @@ const server = app.listen(port, () => {
   }
 });
 
+// Relay HMR / websocket upgrade requests from the preview iframe to the
+// sandboxed preview server (routed by project-scoped preview cookie).
+server.on('upgrade', (req, socket, head) => {
+  previewController.handleUpgrade(req, socket, head);
+});
+
 function shutdown(signal) {
   logger.info(`${signal} received, shutting down gracefully`);
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
+  previewService.cleanupAll().finally(() => {
+    server.close(() => {
+      logger.info('Server closed');
+      process.exit(0);
+    });
   });
   setTimeout(() => process.exit(1), 10000).unref();
 }

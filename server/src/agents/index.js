@@ -4,8 +4,8 @@ const DatabaseEngineerAgent = require('./databaseEngineer');
 const BackendEngineerAgent = require('./backendEngineer');
 const FrontendEngineerAgent = require('./frontendEngineer');
 const QAEngineerAgent = require('./qaEngineer');
-const DocumentationEngineerAgent = require('./documentationEngineer');
 const DeploymentEngineerAgent = require('./deploymentEngineer');
+const DocumentationEngineerAgent = require('./documentationEngineer');
 
 function createAgents() {
   return [
@@ -15,8 +15,8 @@ function createAgents() {
     new BackendEngineerAgent(),
     new FrontendEngineerAgent(),
     new QAEngineerAgent(),
-    new DocumentationEngineerAgent(),
     new DeploymentEngineerAgent(),
+    new DocumentationEngineerAgent(),
   ];
 }
 

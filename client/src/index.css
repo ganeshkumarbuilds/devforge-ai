@@ -57,3 +57,89 @@
     @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
   }
 }
+
+.chat-markdown {
+  @apply text-[14.5px] leading-relaxed text-slate-300;
+}
+.chat-markdown > :first-child {
+  margin-top: 0;
+}
+.chat-markdown > :last-child {
+  margin-bottom: 0;
+}
+.chat-markdown p {
+  @apply my-2.5;
+}
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4 {
+  @apply mt-5 mb-2 font-bold text-white;
+}
+.chat-markdown h1 {
+  @apply text-xl;
+}
+.chat-markdown h2 {
+  @apply text-lg;
+}
+.chat-markdown h3 {
+  @apply text-base;
+}
+.chat-markdown h4 {
+  @apply text-sm;
+}
+.chat-markdown ul {
+  @apply my-2.5 list-disc space-y-1 pl-6;
+}
+.chat-markdown ol {
+  @apply my-2.5 list-decimal space-y-1 pl-6;
+}
+.chat-markdown li {
+  @apply leading-relaxed;
+}
+.chat-markdown li::marker {
+  color: #818cf8;
+}
+.chat-markdown a {
+  @apply font-medium text-accent-soft underline decoration-accent/40 underline-offset-2 hover:text-accent-dim;
+}
+.chat-markdown blockquote {
+  @apply my-3 rounded-r-xl border-l-2 border-accent/50 bg-accent/5 py-2 pl-4 pr-3 text-slate-400;
+}
+.chat-markdown blockquote p {
+  @apply my-0;
+}
+.chat-markdown hr {
+  @apply my-5 border-white/10;
+}
+.chat-markdown strong {
+  @apply font-semibold text-slate-100;
+}
+.chat-markdown code:not(pre code) {
+  @apply rounded-md border border-white/10 bg-base-800 px-1.5 py-0.5 font-mono text-[13px] text-accent-dim;
+}
+.chat-markdown table {
+  @apply my-3 w-full border-collapse overflow-hidden rounded-xl text-sm;
+}
+.chat-markdown th {
+  @apply border border-white/10 bg-base-800 px-3 py-2 text-left font-semibold text-white;
+}
+.chat-markdown td {
+  @apply border border-white/10 px-3 py-2 align-top text-slate-300;
+}
+.chat-markdown tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.02);
+}
+.chat-markdown img {
+  @apply my-3 max-w-full rounded-xl;
+}
+
+/* Neutralize highlight.js defaults inside chat code blocks */
+.chat-markdown pre code.hljs {
+  display: block;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+}
