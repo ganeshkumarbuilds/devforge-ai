@@ -107,6 +107,13 @@ export function useAiTools() {
                 }));
               } else if (payload.error) {
                 streamError = payload.error;
+              } else if (payload.waiting) {
+                setSessions((prev) => ({
+                  ...prev,
+                  [toolId]: prev[toolId].map((m) =>
+                    m.id === assistantMessage.id ? { ...m, waiting: payload, error: null } : m
+                  ),
+                }));
               }
             },
           },

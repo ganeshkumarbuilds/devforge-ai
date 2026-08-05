@@ -5,6 +5,7 @@ const HttpError = require('../utils/httpError');
 const { Pipeline, persistGeneratedFiles, createZipBuffer } = require('../services/pipelineService');
 const { generatedDir } = require('../config');
 const { isConfigured, getModel } = require('../services/openrouterService');
+const { scheduler: llmScheduler } = require('../services/llmScheduler');
 const { getLogs: fetchLogs } = require('../services/buildLogService');
 const { buildLogsMarkdown, projectMarkdown, buildPdf } = require('../services/exportService');
 const { requireOwnedProject } = require('../utils/projectAccess');
@@ -296,6 +297,9 @@ async function getProject(req, res) {
       startedAt: a.startedAt,
       completedAt: a.completedAt,
       createdAt: a.createdAt,
+      // Live "Waiting for OpenRouter" state (queue position / rate-limit
+      // retry countdown) surfaced by the global LLM request scheduler.
+      waiting: llmScheduler.getStatus(a.id) || null,
     })),
     fileTree: toFileTree(project.files),
     files: project.files.map((f) => ({ path: f.path, content: f.content, language: f.language })),

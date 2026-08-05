@@ -49,6 +49,13 @@ export default function ToolMessage({ message, tool, streaming = false, error = 
             <Markdown content={message.content} />
             {streaming && <TypingCursor />}
           </>
+        ) : message.waiting ? (
+          <div className="flex items-center gap-2 py-1 text-xs text-amber-300/80">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+            {message.waiting.retryInSec != null
+              ? `OpenRouter is rate limited — retrying in ${message.waiting.retryInSec}s${message.waiting.attempt ? ` (attempt ${message.waiting.attempt})` : ''}`
+              : 'Waiting for OpenRouter…'}
+          </div>
         ) : (
           <div className="flex items-center gap-2 py-1">
             <span className="h-2 w-2 animate-bounce rounded-full bg-slate-500" />

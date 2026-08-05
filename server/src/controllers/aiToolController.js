@@ -65,7 +65,20 @@ async function run(req, res) {
   let fullText = '';
 
   try {
-    for await (const chunk of runTool({ id: tool, messages: normalized, signal: abortController.signal })) {
+    for await (const chunk of runTool({
+      id: tool,
+      messages: normalized,
+      signal: abortController.signal,
+      requestId: `tool:${tool}`,
+      onSchedulerStatus: (s) => {
+        if (!s) return;
+        if (s.type === 'queued') {
+          sendEvent({ waiting: true, queued: true });
+        } else if (s.type === 'rate_limited') {
+          sendEvent({ waiting: true, retryInSec: s.retryInSec, attempt: s.attempt });
+        }
+      },
+    })) {
       if (chunk.delta) {
         fullText += chunk.delta;
         sendEvent({ delta: chunk.delta });

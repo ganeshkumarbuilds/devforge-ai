@@ -44,6 +44,7 @@ export default function ProgressTimeline({ agents }) {
                   agent.status === 'completed' && 'border-emerald-400/40 bg-emerald-500/15 text-emerald-400',
                   agent.status === 'failed' && 'border-rose-400/40 bg-rose-500/15 text-rose-400',
                   agent.status === 'running' && 'border-accent/50 bg-accent/15 text-accent-soft',
+                  agent.status === 'queued' && 'border-amber-400/40 bg-amber-500/15 text-amber-400',
                   agent.status === 'pending' && 'border-base-600 bg-base-800 text-slate-500'
                 )}
               >
@@ -51,7 +52,7 @@ export default function ProgressTimeline({ agents }) {
                   <CheckCircle2 className="h-4 w-4" />
                 ) : agent.status === 'failed' ? (
                   <XCircle className="h-4 w-4" />
-                ) : agent.status === 'running' ? (
+                ) : agent.status === 'running' || agent.status === 'queued' ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Icon className="h-4 w-4" style={{ color: meta.color }} />
@@ -66,10 +67,11 @@ export default function ProgressTimeline({ agents }) {
                       agent.status === 'completed' && 'text-emerald-400',
                       agent.status === 'failed' && 'text-rose-400',
                       agent.status === 'running' && 'text-accent-soft',
+                      agent.status === 'queued' && 'text-amber-400',
                       agent.status === 'pending' && 'text-slate-500'
                     )}
                   >
-                    {agent.status === 'pending' ? 'Waiting' : agent.status}
+                    {agent.status === 'pending' ? 'Waiting' : agent.status === 'queued' ? 'Waiting for OpenRouter' : agent.status}
                   </span>
                 </div>
                 <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-base-700">
@@ -77,7 +79,7 @@ export default function ProgressTimeline({ agents }) {
                     className="h-full rounded-full"
                     style={{
                       backgroundColor:
-                        agent.status === 'failed' ? '#fb7185' : agent.status === 'completed' ? '#34d399' : meta.color,
+                        agent.status === 'failed' ? '#fb7185' : agent.status === 'queued' ? '#fbbf24' : agent.status === 'completed' ? '#34d399' : meta.color,
                     }}
                     animate={{ width: `${agent.progress ?? 0}%` }}
                     transition={{ duration: 0.4 }}

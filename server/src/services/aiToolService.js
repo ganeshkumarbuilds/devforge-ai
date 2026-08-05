@@ -345,7 +345,7 @@ function getCategories() {
  * Stream a tool execution. Yields `{ delta }` partial tokens and resolves with
  * `{ content }` once complete. Throws `OpenRouterError` on failure.
  */
-async function* runTool({ id, messages, signal }) {
+async function* runTool({ id, messages, signal, onSchedulerStatus, requestId }) {
   const tool = getTool(id);
   if (!tool) {
     const error = new Error('Unknown AI tool');
@@ -355,7 +355,7 @@ async function* runTool({ id, messages, signal }) {
 
   const modelMessages = [{ role: 'system', content: tool.systemPrompt }, ...messages];
   let fullText = '';
-  for await (const chunk of streamChat({ messages: modelMessages, signal })) {
+  for await (const chunk of streamChat({ messages: modelMessages, signal, onSchedulerStatus, requestId })) {
     if (chunk.delta) {
       fullText += chunk.delta;
       yield { delta: chunk.delta };

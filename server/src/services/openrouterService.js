@@ -1,6 +1,7 @@
 const OpenAI = require('openai');
 const { openrouterApiKey, openrouterBaseUrl, openrouterModel, agentMaxTokens } = require('../config');
 const logger = require('../utils/logger');
+const { scheduler, isRateLimitError, extractRetryAfterMs } = require('./llmScheduler');
 
 class OpenRouterError extends Error {
   constructor(message, detail, code = null) {
@@ -10,7 +11,9 @@ class OpenRouterError extends Error {
   }
 }
 
-// Single reusable client instance shared by every agent.
+// Single reusable client instance shared by every agent. All retries are
+// handled by the global request scheduler (see llmScheduler.js) so the SDK's
+// own built-in retry is disabled to avoid double-backoff on rate limits.
 const client = new OpenAI({
   apiKey: openrouterApiKey,
   baseURL: openrouterBaseUrl,
@@ -19,6 +22,7 @@ const client = new OpenAI({
     'X-Title': 'DevForge AI',
   },
   timeout: 120000,
+  maxRetries: 0,
 });
 
 function isConfigured() {
@@ -69,8 +73,11 @@ function toErrorMessage(err) {
  * @param {string} opts.model Override model
  * @param {Object} opts.options Chat options (temperature, max_tokens / num_predict, etc.)
  * @param {Function} opts.onProgress Streaming progress callback with full text so far
+ * @param {Function} opts.onSchedulerStatus Receives scheduler status updates (queued / rate_limited / running)
+ * @param {string} opts.requestId Stable id for scheduler status tracking (e.g. an agentRun id)
+ * @param {AbortSignal} opts.signal Abort signal forwarded to the HTTP request
  */
-async function chat({ messages, options = {}, onProgress }) {
+async function chat({ messages, options = {}, onProgress, onSchedulerStatus, requestId, signal }) {
   if (!isConfigured()) {
     throw new OpenRouterError(
       'OpenRouter is not configured',
@@ -87,18 +94,23 @@ async function chat({ messages, options = {}, onProgress }) {
   };
 
   try {
-    const stream = await client.chat.completions.create(payload);
-    let fullText = '';
-    for await (const chunk of stream) {
-      const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta
-        ? chunk.choices[0].delta.content
-        : null;
-      if (delta) {
-        fullText += delta;
-        if (onProgress) onProgress(fullText);
-      }
-    }
-    return { content: fullText.trim() };
+    return await scheduler.run(
+      async () => {
+        const stream = await client.chat.completions.create({ ...payload, signal });
+        let fullText = '';
+        for await (const chunk of stream) {
+          const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta
+            ? chunk.choices[0].delta.content
+            : null;
+          if (delta) {
+            fullText += delta;
+            if (onProgress) onProgress(fullText);
+          }
+        }
+        return { content: fullText.trim() };
+      },
+      { id: requestId, onStatus: onSchedulerStatus, signal }
+    );
   } catch (err) {
     const status = err.status || (err.response && err.response.status);
     const message = toErrorMessage(err);
@@ -113,8 +125,10 @@ async function chat({ messages, options = {}, onProgress }) {
  * @param {Object} opts
  * @param {Array} opts.messages Array of { role, content }
  * @param {Object} opts.options Chat options (temperature, max_tokens, etc.)
+ * @param {Function} opts.onSchedulerStatus Receives scheduler status updates (queued / rate_limited / running)
+ * @param {string} opts.requestId Stable id for scheduler status tracking
  */
-async function* streamChat({ messages, options = {}, signal }) {
+async function* streamChat({ messages, options = {}, signal, onSchedulerStatus, requestId }) {
   if (!isConfigured()) {
     throw new OpenRouterError(
       'OpenRouter is not configured',
@@ -130,8 +144,15 @@ async function* streamChat({ messages, options = {}, signal }) {
     max_tokens: options.max_tokens ?? options.num_predict ?? agentMaxTokens,
   };
 
+  const handle = await scheduler.acquire({
+    id: requestId,
+    create: () => client.chat.completions.create({ ...payload, signal }),
+    onStatus: onSchedulerStatus,
+    signal,
+  });
+
   try {
-    const stream = await client.chat.completions.create({ ...payload, signal });
+    const stream = handle.stream;
     let fullText = '';
     for await (const chunk of stream) {
       if (signal && signal.aborted) break;
@@ -152,6 +173,8 @@ async function* streamChat({ messages, options = {}, signal }) {
     const message = toErrorMessage(err);
     logger.error(`[OpenRouter] Stream failed${status ? ` (HTTP ${status})` : ''}: ${message}`);
     throw new OpenRouterError(message, err.message || String(err), status ? String(status) : 'network');
+  } finally {
+    handle.release();
   }
 }
 
@@ -171,4 +194,17 @@ function stripFences(content) {
     .trim();
 }
 
-module.exports = { client, chat, streamChat, isConfigured, getModel, extractCodeBlock, stripFences, OpenRouterError, toErrorMessage };
+module.exports = {
+  client,
+  chat,
+  streamChat,
+  isConfigured,
+  getModel,
+  extractCodeBlock,
+  stripFences,
+  OpenRouterError,
+  toErrorMessage,
+  isRateLimitError,
+  extractRetryAfterMs,
+  scheduler,
+};

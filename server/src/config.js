@@ -66,6 +66,17 @@ const config = {
   // Export Protection: never ship an unvalidated project unless explicitly
   // opted out by the operator.
   validationAllowUnvalidatedDownload: parseBool(process.env.VALIDATION_ALLOW_UNVALIDATED_DOWNLOAD, false),
+  // Global OpenRouter request scheduler. Free-tier models are very strict about
+  // concurrent requests, so every model call (agents, chat, tools, reviews,
+  // migrations, self-healing repairs) is serialized through one global queue.
+  openrouterMaxConcurrency: parseInt(requireEnv('OPENROUTER_MAX_CONCURRENCY', '1'), 10),
+  // Automatic retries for HTTP 429/529 rate limits. Default 0 = retry
+  // indefinitely so a temporary rate limit never surfaces as a failed build or
+  // a manual retry. Set a positive number to bound the wait.
+  openrouterMaxRetries: parseInt(requireEnv('OPENROUTER_MAX_RETRIES', '0'), 10),
+  // Exponential backoff for rate limits (Retry-After is honored when present).
+  openrouterRetryBaseDelayMs: parseInt(requireEnv('OPENROUTER_RETRY_BASE_DELAY_MS', '1000'), 10),
+  openrouterRetryMaxDelayMs: parseInt(requireEnv('OPENROUTER_RETRY_MAX_DELAY_MS', '60000'), 10),
 };
 
 module.exports = config;

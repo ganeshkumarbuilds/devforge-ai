@@ -6,6 +6,7 @@ const prisma = require('../lib/prisma');
 const { createAgents } = require('../agents');
 const { generatedDir } = require('../config');
 const { sleep } = require('../agents/baseAgent');
+const { isRateLimitError } = require('../services/openrouterService');
 const { writeLog } = require('./buildLogService');
 const { languageOf, IGNORED_DIRS } = require('../utils/fileUtils');
 const { finalizeGeneratedProject } = require('./finalizeService');
@@ -153,6 +154,7 @@ class Pipeline {
     let lastProgressUpdate = 0;
     let lastOutputUpdate = 0;
     let progressSinceLastDbWrite = 0;
+    let lastRateLimitNoteAt = 0;
 
     const callbacks = {
       onProgress: async (text) => {
@@ -179,6 +181,33 @@ class Pipeline {
       onOutput: async (text) => {
         await this.updateAgent(agentRun.id, { output: text, progress: 95 }).catch(() => {});
       },
+      // The global LLM scheduler surfaces queue / rate-limit state here. The
+      // agent stays "queued" (Waiting for OpenRouter) instead of failing while
+      // OpenRouter throttles us, and the project is never marked failed.
+      onSchedulerStatus: (status) => {
+        if (!status) return;
+        if (status.type === 'queued') {
+          this.updateAgent(agentRun.id, { status: 'queued' }).catch(() => {});
+        } else if (status.type === 'rate_limited') {
+          this.updateAgent(agentRun.id, { status: 'queued' }).catch(() => {});
+          const now = Date.now();
+          if (now - lastRateLimitNoteAt > 5000) {
+            lastRateLimitNoteAt = now;
+            const note = `Waiting for OpenRouter — retrying in ${status.retryInSec}s (attempt ${status.attempt})`;
+            this.updateAgent(agentRun.id, { output: note }).catch(() => {});
+            writeLog({
+              projectId: this.projectId,
+              agentRunId: agentRun.id,
+              level: 'warn',
+              source: agent.role,
+              message: `[${agent.displayName}] OpenRouter rate limited — ${note}.`,
+            }).catch(() => {});
+          }
+        } else if (status.type === 'running') {
+          this.updateAgent(agentRun.id, { status: 'running' }).catch(() => {});
+        }
+      },
+      requestId: agentRun.id,
     };
 
     try {
@@ -234,21 +263,52 @@ class Pipeline {
       return true;
     } catch (err) {
       const errMsg = err.message || 'Execution error';
+      // Temporary OpenRouter rate limits must never surface as a failed agent.
+      // The scheduler retries them automatically; the step-level retry loop in
+      // `_runAgentStepGuarded` picks it up if one still escapes (finite
+      // OPENROUTER_MAX_RETRIES). Keep the agent "queued"/waiting, not "failed".
+      const rateLimited = isRateLimitError(err);
       await this.updateAgent(agentRun.id, {
-        status: 'failed',
-        error: errMsg,
-        completedAt: new Date(),
+        status: rateLimited ? 'queued' : 'failed',
+        error: rateLimited ? null : errMsg,
+        completedAt: rateLimited ? null : new Date(),
       }).catch(() => {});
 
       await writeLog({
         projectId: this.projectId,
         agentRunId: agentRun.id,
-        level: 'error',
+        level: rateLimited ? 'warn' : 'error',
         source: agent.role,
-        message: `[${agent.displayName}] failed: ${errMsg}`,
+        message: rateLimited
+          ? `[${agent.displayName}] waiting for OpenRouter rate limit to clear — retrying automatically`
+          : `[${agent.displayName}] failed: ${errMsg}`,
       });
 
       throw err;
+    }
+  }
+
+  /**
+   * Run a single agent step, retrying automatically when the failure is only a
+   * temporary OpenRouter rate limit. This is a defensive backstop: the global
+   * scheduler already retries 429s internally, but this guarantees a project or
+   * agent is never marked failed because of a rate limit even when the operator
+   * bounds OPENROUTER_MAX_RETRIES.
+   */
+  async _runAgentStepGuarded(agent) {
+    const MAX_RATE_RETRIES = 50;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.runAgentStep(agent);
+      } catch (err) {
+        if (!isRateLimitError(err)) throw err;
+        if (attempt > MAX_RATE_RETRIES) throw err;
+        const delay = Math.min(3000 * Math.pow(2, attempt - 1), 60000);
+        console.warn(
+          `[Pipeline] Rate limit during "${agent.displayName}" step — retrying in ${Math.round(delay / 1000)}s (attempt ${attempt})`
+        );
+        await sleep(delay);
+      }
     }
   }
 
@@ -261,7 +321,7 @@ class Pipeline {
         if (this.aborted) break;
         const agent = agents[i];
         try {
-          await this.runAgentStep(agent);
+          await this._runAgentStepGuarded(agent);
         } catch (err) {
           await this.setProject('failed', `Agent "${agent.displayName}" failed: ${err.message}`);
           return;
@@ -305,7 +365,7 @@ class Pipeline {
     try {
       for (const agent of agentList) {
         if (this.aborted) throw new Error('Repair aborted by user');
-        await this.runAgentStep(agent);
+        await this._runAgentStepGuarded(agent);
       }
 
       if (!skipStatus) await this.setProject('validating');

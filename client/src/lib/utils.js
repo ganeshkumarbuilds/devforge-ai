@@ -85,7 +85,7 @@ export function statusTone(status) {
     validation_failed: 'red',
     pending: 'slate',
     building: 'accent',
-    queued: 'slate',
+    queued: 'amber',
   };
   return map[status] || 'slate';
 }

@@ -150,6 +150,12 @@ export function useChat() {
                 );
               } else if (payload.error) {
                 streamError = payload.error;
+              } else if (payload.waiting) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantMessage.id ? { ...m, waiting: payload, error: null } : m
+                  )
+                );
               }
             },
           },

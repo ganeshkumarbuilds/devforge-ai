@@ -317,7 +317,7 @@ class BaseAgent {
     this.color = color;
   }
 
-  async callModel({ messages, temperature, onProgress }) {
+  async callModel({ messages, temperature, onProgress, onSchedulerStatus, requestId }) {
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -328,6 +328,8 @@ class BaseAgent {
             num_predict: agentMaxTokens,
           },
           onProgress,
+          onSchedulerStatus,
+          requestId,
         });
       } catch (err) {
         lastError = err;
@@ -344,13 +346,13 @@ class BaseAgent {
   /**
    * Run the model with retry + JSON output contract and optional schema validation.
    */
-  async runJson({ messages, temperature, validateFn, onProgress, onOutput }) {
+  async runJson({ messages, temperature, validateFn, onProgress, onOutput, onSchedulerStatus, requestId }) {
     let lastError = null;
     let lastRaw = null;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const { content } = await this.callModel({ messages, temperature, onProgress });
+        const { content } = await this.callModel({ messages, temperature, onProgress, onSchedulerStatus, requestId });
         lastRaw = content;
         if (onOutput) onOutput(content);
         let parsed = parseJsonResponse(content, validateFn);
@@ -381,7 +383,7 @@ class BaseAgent {
             content: 'Return ONLY valid JSON. No markdown, no explanations, no comments.',
           },
         ];
-        const { content } = await this.callModel({ messages: retryMessages, temperature: 0.1, onProgress });
+        const { content } = await this.callModel({ messages: retryMessages, temperature: 0.1, onProgress, onSchedulerStatus, requestId });
         if (onOutput) onOutput(content);
         let parsed = parseJsonResponse(content, validateFn);
         parsed = validateFileContents(parsed);
@@ -406,7 +408,7 @@ class BaseAgent {
               'Do NOT wrap in markdown fences. Escape all newlines inside code strings with \\n.',
           },
         ];
-        const { content } = await this.callModel({ messages: repairMessages, temperature: 0.1, onProgress });
+        const { content } = await this.callModel({ messages: repairMessages, temperature: 0.1, onProgress, onSchedulerStatus, requestId });
         if (onOutput) onOutput(content);
         let parsed = parseJsonResponse(content, validateFn);
         parsed = validateFileContents(parsed);

@@ -14,9 +14,21 @@ import { useState } from 'react';
 
 function StatusIcon({ status, color }) {
   if (status === 'running') return <Loader2 className="h-4 w-4 animate-spin" style={{ color }} />;
+  if (status === 'queued') return <Loader2 className="h-4 w-4 animate-spin text-amber-400" />;
   if (status === 'completed') return <CheckCircle2 className="h-4 w-4 text-emerald-400" />;
   if (status === 'failed') return <XCircle className="h-4 w-4 text-rose-400" />;
   return <Clock className="h-4 w-4 text-slate-500" />;
+}
+
+function waitingLabel(agent) {
+  const w = agent.waiting;
+  if (w) {
+    if (w.type === 'rate_limited') {
+      return `OpenRouter rate limited — retrying in ${w.retryInSec}s (attempt ${w.attempt ?? 1})`;
+    }
+    return `Waiting for an OpenRouter slot${w.position ? ` (queue position ${w.position})` : ''}`;
+  }
+  return 'Waiting for OpenRouter';
 }
 
 export default function AgentCard({ agent, index = 0 }) {
@@ -25,6 +37,7 @@ export default function AgentCard({ agent, index = 0 }) {
 
   const statusLabel = {
     pending: 'Waiting',
+    queued: 'Waiting for OpenRouter',
     running: 'Running',
     completed: 'Completed',
     failed: 'Failed',
@@ -32,6 +45,7 @@ export default function AgentCard({ agent, index = 0 }) {
 
   const statusTone = {
     pending: 'text-slate-500',
+    queued: 'text-amber-400',
     running: 'text-accent-soft',
     completed: 'text-emerald-400',
     failed: 'text-rose-400',
@@ -40,6 +54,7 @@ export default function AgentCard({ agent, index = 0 }) {
   const progress = agent.progress ?? 0;
   const showOutput = agent.status === 'running' && agent.output;
   const showError = agent.status === 'failed' && agent.error;
+  const isQueued = agent.status === 'queued';
 
   return (
     <motion.div
@@ -49,6 +64,7 @@ export default function AgentCard({ agent, index = 0 }) {
       className={cn(
         'card-surface overflow-hidden transition-all duration-300',
         agent.status === 'running' && 'border-accent/40',
+        agent.status === 'queued' && 'border-amber-500/30',
         agent.status === 'failed' && 'border-rose-500/30'
       )}
     >
@@ -72,7 +88,7 @@ export default function AgentCard({ agent, index = 0 }) {
             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-base-700">
               <motion.div
                 className="h-full rounded-full"
-                style={{ backgroundColor: agent.status === 'failed' ? '#fb7185' : agent.status === 'completed' ? '#34d399' : meta.color }}
+                style={{ backgroundColor: agent.status === 'failed' ? '#fb7185' : agent.status === 'queued' ? '#fbbf24' : agent.status === 'completed' ? '#34d399' : meta.color }}
                 animate={{ width: `${progress}%` }}
                 transition={{ duration: 0.5, ease: 'easeOut' }}
               />
@@ -82,6 +98,12 @@ export default function AgentCard({ agent, index = 0 }) {
           {agent.status === 'running' && (
             <p className="mt-1 text-[11px] text-slate-500">
               {agent.startedAt ? `Started ${formatDateTime(agent.startedAt)}` : 'Starting…'}
+            </p>
+          )}
+          {isQueued && (
+            <p className="mt-1 flex items-center gap-1.5 text-[11px] text-amber-300/80">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              {waitingLabel(agent)}
             </p>
           )}
           {agent.status === 'completed' && agent.completedAt && (

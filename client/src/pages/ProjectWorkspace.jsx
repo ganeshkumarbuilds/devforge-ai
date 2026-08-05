@@ -188,7 +188,7 @@ export default function ProjectWorkspace() {
   }, [projectId]);
 
   useEffect(() => {
-    const toRun = agents.filter((a) => a.status === 'running');
+    const toRun = agents.filter((a) => a.status === 'running' || a.status === 'queued');
     if (toRun.length) {
       const id = setTimeout(() => setTab((t) => (t === 'console' || t === 'overview' ? t : 'overview')), 300);
       return () => clearTimeout(id);
