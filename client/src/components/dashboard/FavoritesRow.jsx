@@ -26,7 +26,7 @@ export default function FavoritesRow({ favorites = [] }) {
     <div className="flex gap-4 overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }}>
       {favorites.map((p, i) => {
         const tone = statusTone(p.status);
-        const busy = p.status === 'running' || p.status === 'validating';
+        const busy = p.status === 'running' || p.status === 'validating' || p.status === 'recovering';
         const icon = busy ? (
           <Loader2 className="h-5 w-5 animate-spin" />
         ) : p.status === 'failed' ? (
@@ -49,7 +49,7 @@ export default function FavoritesRow({ favorites = [] }) {
               <div
                 className={cn(
                   'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl',
-                  p.status === 'running' || p.status === 'validating'
+                  p.status === 'running' || p.status === 'validating' || p.status === 'recovering'
                     ? 'bg-accent/15 text-accent-soft'
                     : p.status === 'failed' || p.status === 'validation_failed'
                       ? 'bg-rose-500/15 text-rose-400'

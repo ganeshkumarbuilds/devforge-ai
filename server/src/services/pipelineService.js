@@ -296,19 +296,24 @@ class Pipeline {
    * Run one or more agents, then hand the project to the shared verification
    * pipeline. Only a passing validation marks the project "Completed".
    * Returns the finalize result ({ ok, validation }) or { ok: false, error }.
+   * With `finalize: false` the verification is skipped (the caller runs it);
+   * with `skipStatus: true` the project status is left untouched (useful when
+   * an autonomous recovery loop controls the status itself).
    */
-  async runAndFinalize(agentList, { summary, errorPrefix = 'Repair failed' } = {}) {
-    await this.setProject('running');
+  async runAndFinalize(agentList, { summary, errorPrefix = 'Repair failed', finalize = true, skipStatus = false } = {}) {
+    if (!skipStatus) await this.setProject('running');
     try {
       for (const agent of agentList) {
         if (this.aborted) throw new Error('Repair aborted by user');
         await this.runAgentStep(agent);
       }
 
+      if (!skipStatus) await this.setProject('validating');
+      if (!finalize) return { ok: true, skippedFinalize: true };
+
       // The project is NOT "completed" yet — it must pass the same verification
       // pipeline as a full build (static, API contract, build, health, E2E)
       // before it may be marked Completed.
-      await this.setProject('validating');
       return await finalizeGeneratedProject({
         projectId: this.projectId,
         prompt: this.prompt,
@@ -317,7 +322,7 @@ class Pipeline {
         files: this.context.files,
       });
     } catch (err) {
-      await this.setProject('failed', `${errorPrefix}: ${err.message}`);
+      if (!skipStatus) await this.setProject('failed', `${errorPrefix}: ${err.message}`);
       return { ok: false, error: err.message };
     }
   }
@@ -327,12 +332,12 @@ class Pipeline {
    * re-run (e.g. backend-engineer); `repair` carries the diagnostics + area so
    * the agents fix only their own component.
    */
-  async runRepairAgents(roles, { summary, repair } = {}) {
+  async runRepairAgents(roles, { summary, repair, finalize = true, skipStatus = false } = {}) {
     const agents = createAgents();
     const targets = roles.map((r) => agents.find((a) => a.role === r));
     if (targets.some((a) => !a)) throw new Error(`Unknown agent role for repair: ${roles.join(', ')}`);
     if (repair) this.context.repair = repair;
-    return this.runAndFinalize(targets, { summary, errorPrefix: 'AI repair failed' });
+    return this.runAndFinalize(targets, { summary, errorPrefix: 'AI repair failed', finalize, skipStatus });
   }
 
   abort() {

@@ -34,6 +34,7 @@ export default function RecentProjects({ projects = [], onViewAll }) {
         )}
         {projects.map((p, i) => {
           const tone = statusTone(p.status);
+          const busy = p.status === 'running' || p.status === 'validating' || p.status === 'recovering';
           return (
             <motion.div
               key={p.id}
@@ -48,14 +49,14 @@ export default function RecentProjects({ projects = [], onViewAll }) {
                 <div
                   className={cn(
                     'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl',
-                    p.status === 'running' || p.status === 'validating'
+                    busy
                       ? 'bg-accent/15 text-accent-soft'
                       : p.status === 'failed' || p.status === 'validation_failed'
                         ? 'bg-rose-500/15 text-rose-400'
                         : 'bg-emerald-500/15 text-emerald-400'
                   )}
                 >
-                  {p.status === 'running' || p.status === 'validating' ? (
+                  {busy ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : p.status === 'failed' ? (
                     <AlertTriangle className="h-4 w-4" />
@@ -74,7 +75,7 @@ export default function RecentProjects({ projects = [], onViewAll }) {
                   </p>
                 </div>
                 <div className="hidden shrink-0 items-center gap-2 sm:flex">
-                  <Badge tone={tone} dot pulse={p.status === 'running' || p.status === 'validating'}>
+                  <Badge tone={tone} dot pulse={busy}>
                     {projectStatusLabel(p.status)}
                   </Badge>
                   <span className="inline-flex items-center gap-1 text-xs text-slate-500">

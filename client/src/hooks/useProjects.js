@@ -6,6 +6,7 @@ export function useProjects({ autoRefresh = false, intervalMs = 5000 } = {}) {
   const [counts, setCounts] = useState({
     running: 0,
     validating: 0,
+    recovering: 0,
     completed: 0,
     failed: 0,
     validation_failed: 0,

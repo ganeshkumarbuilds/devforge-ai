@@ -128,7 +128,7 @@ async function listProjects(req, res) {
       { stack: { contains: q } },
     ];
   }
-  if (status && ['running', 'validating', 'completed', 'failed', 'validation_failed'].includes(status)) {
+  if (status && ['running', 'validating', 'recovering', 'completed', 'failed', 'validation_failed'].includes(status)) {
     where.status = status;
   }
   if (stack && typeof stack === 'string' && stack.trim()) {
@@ -149,7 +149,7 @@ async function listProjects(req, res) {
     }),
   ]);
 
-  const statusCounts = { running: 0, validating: 0, completed: 0, failed: 0, validation_failed: 0 };
+  const statusCounts = { running: 0, validating: 0, recovering: 0, completed: 0, failed: 0, validation_failed: 0 };
   for (const c of counts) statusCounts[c.status] = c._count._all;
 
   res.json({
@@ -190,7 +190,7 @@ async function getStats(req, res) {
     prisma.project.count({ where: { ownerId, favorite: true } }),
   ]);
 
-  const statusCounts = { running: 0, validating: 0, completed: 0, failed: 0, validation_failed: 0 };
+  const statusCounts = { running: 0, validating: 0, recovering: 0, completed: 0, failed: 0, validation_failed: 0 };
   for (const p of projects) {
     if (Object.prototype.hasOwnProperty.call(statusCounts, p.status)) statusCounts[p.status] += 1;
   }
@@ -518,8 +518,18 @@ async function repairProject(req, res) {
   const { id } = req.params;
   const { area } = req.body || {};
   await requireOwnedProject(id, req.userId);
-  const result = await repairService.startRepair(id, area);
-  res.status(202).json(result);
+  const { project } = await repairService.startRepair(id, area);
+  finalizeGeneratedProject({
+    projectId: id,
+    prompt: project.description,
+    summary: `AI repair: ${repairService.AREA_LABELS[area] || area}`,
+    files: {},
+    title: null,
+    repairArea: area,
+  })
+    .catch((err) => console.error('[Repair]', err))
+    .finally(() => repairService.endRepair(id));
+  res.status(202).json({ ok: true, area });
 }
 
 async function listRepairs(req, res) {

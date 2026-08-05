@@ -79,6 +79,7 @@ export function statusTone(status) {
   const map = {
     running: 'accent',
     validating: 'amber',
+    recovering: 'violet',
     completed: 'green',
     failed: 'red',
     validation_failed: 'red',
@@ -95,6 +96,8 @@ export function projectStatusLabel(status) {
       return 'Building';
     case 'validating':
       return 'Validating…';
+    case 'recovering':
+      return 'AI Repairing…';
     case 'completed':
       return 'Completed';
     case 'failed':

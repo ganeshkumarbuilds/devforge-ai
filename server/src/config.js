@@ -58,6 +58,11 @@ const config = {
   validationE2eEnabled: parseBool(process.env.VALIDATION_E2E_ENABLED, true),
   validationFrontendHealthTimeoutMs: parseInt(requireEnv('VALIDATION_FRONTEND_HEALTH_TIMEOUT_MS', '15000'), 10),
   validationE2eTimeoutMs: parseInt(requireEnv('VALIDATION_E2E_TIMEOUT_MS', '180000'), 10),
+  // Autonomous failure recovery: when validation fails after generation, the AI
+  // repair agent regenerates the failing components and the full validation
+  // pipeline re-runs. This is the maximum number of repair→validate cycles
+  // attempted before surfacing a manual "Validation Failed" report.
+  validationAutoRepairMaxRetries: parseInt(requireEnv('VALIDATION_AUTO_REPAIR_MAX_RETRIES', '2'), 10),
   // Export Protection: never ship an unvalidated project unless explicitly
   // opted out by the operator.
   validationAllowUnvalidatedDownload: parseBool(process.env.VALIDATION_ALLOW_UNVALIDATED_DOWNLOAD, false),

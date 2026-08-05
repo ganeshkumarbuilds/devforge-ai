@@ -1,6 +1,5 @@
 const prisma = require('../lib/prisma');
 const HttpError = require('../utils/httpError');
-const { Pipeline } = require('./pipelineService');
 const { getLogs } = require('./buildLogService');
 const { getModel } = require('./openrouterService');
 const previewService = require('./previewService');
@@ -128,8 +127,66 @@ function seedContext(pipeline, project, files) {
 }
 
 /**
- * Kick off an AI repair. The full verification pipeline runs automatically
- * afterwards; the repair is only marked successful when validation passes.
+ * Run the AI repair agents for an area. Regenerates only the failing
+ * components — no validation, no status changes (the caller controls those).
+ * `quiet` skips status transitions so an autonomous recovery loop can keep the
+ * project in the "recovering" state.
+ */
+async function performRepair(projectId, area, summary, { quiet = false } = {}) {
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) throw new HttpError(404, 'Project not found');
+
+  const before = await snapshotFiles(projectId);
+  await previewService.syncProjectToDisk(projectId).catch(() => {});
+  const diagnostics = await gatherDiagnostics(projectId);
+
+  // Lazy require: repairService <-> pipelineService <-> finalizeService form a
+  // cycle; deferring the Pipeline import to call time keeps load order acyclic.
+  const { Pipeline } = require('./pipelineService');
+  const pipeline = new Pipeline({ projectId: project.id, prompt: project.description, stack: project.stack });
+  seedContext(pipeline, project, before);
+
+  const roles = AREA_ROLES[area] || AREA_ROLES.all;
+  const result = await pipeline.runRepairAgents(roles, {
+    summary,
+    repair: { area, diagnostics },
+    finalize: false,
+    skipStatus: quiet,
+  });
+
+  const after = await snapshotFiles(projectId);
+  return { filesModified: diffPaths(before, after), ok: result.ok, error: result.error || null };
+}
+
+/** Persist one AI repair run into the repair history. Never throws. */
+async function recordRepairRun({ projectId, area, status, validation, filesModified = [], error = null }) {
+  try {
+    return await prisma.repairRun.create({
+      data: {
+        projectId,
+        area,
+        model: getModel() || '',
+        status: status || (validation && validation.ok ? 'passed' : 'failed'),
+        filesModified,
+        validationResult: validation
+          ? {
+              ok: Boolean(validation.ok),
+              attempts: validation.attempts || 0,
+              issues: (validation.report && validation.report.issues) || [],
+            }
+          : null,
+        error: error ? String(error).slice(0, 4000) : null,
+      },
+    });
+  } catch (err) {
+    console.error('[Repair] failed to record repair run', err.message);
+    return null;
+  }
+}
+
+/**
+ * Guard + bookkeeping for a user-initiated "Repair with AI". The caller runs
+ * the shared finalize/recovery pipeline afterwards and must call `endRepair`.
  */
 async function startRepair(projectId, area) {
   if (!AREA_ROLES[area]) throw new HttpError(400, `Unknown repair area: ${area}`);
@@ -139,55 +196,19 @@ async function startRepair(projectId, area) {
   if (buildValidator.isValidationRunning(projectId)) {
     throw new HttpError(409, 'A validation run is already in progress');
   }
-
-  const run = await prisma.repairRun.create({
-    data: { projectId: project.id, area, model: getModel() || '', status: 'running' },
-  });
-
+  if (['running', 'recovering', 'validating'].includes(project.status)) {
+    throw new HttpError(409, 'Project is already building or recovering');
+  }
   inFlight.add(projectId);
-  runRepairAsync(project.id, area, run.id)
-    .catch((err) => console.error('[Repair]', err))
-    .finally(() => inFlight.delete(projectId));
-
-  return { ok: true, repairId: run.id, area };
+  return { project };
 }
 
-async function runRepairAsync(projectId, area, runId) {
-  const project = await prisma.project.findUnique({ where: { id: projectId } });
-  const before = await snapshotFiles(projectId);
-  await previewService.syncProjectToDisk(projectId).catch(() => {});
+function endRepair(projectId) {
+  inFlight.delete(projectId);
+}
 
-  const diagnostics = await gatherDiagnostics(projectId);
-
-  const pipeline = new Pipeline({ projectId: project.id, prompt: project.description, stack: project.stack });
-  seedContext(pipeline, project, before);
-
-  const roles = AREA_ROLES[area];
-  const result = await pipeline.runRepairAgents(roles, {
-    summary: `AI repair: ${AREA_LABELS[area]}`,
-    repair: { area, diagnostics },
-  });
-
-  const after = await snapshotFiles(projectId);
-  const filesModified = diffPaths(before, after);
-
-  await prisma.repairRun.update({
-    where: { id: runId },
-    data: {
-      status: result.ok ? 'passed' : 'failed',
-      filesModified,
-      validationResult: result.validation
-        ? {
-            ok: Boolean(result.validation.ok),
-            attempts: result.validation.attempts || 0,
-            issues: (result.validation.report && result.validation.report.issues) || [],
-          }
-        : null,
-      error: result.error || null,
-    },
-  });
-
-  return result;
+function isRepairRunning(projectId) {
+  return inFlight.has(projectId);
 }
 
 async function listRepairs(projectId) {
@@ -199,8 +220,12 @@ async function listRepairs(projectId) {
   return runs.map(serializeRepair);
 }
 
-function isRepairRunning(projectId) {
-  return inFlight.has(projectId);
-}
-
-module.exports = { startRepair, listRepairs, isRepairRunning, AREA_LABELS };
+module.exports = {
+  performRepair,
+  recordRepairRun,
+  startRepair,
+  endRepair,
+  listRepairs,
+  isRepairRunning,
+  AREA_LABELS,
+};

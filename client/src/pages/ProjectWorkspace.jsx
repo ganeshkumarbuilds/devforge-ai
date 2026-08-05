@@ -58,6 +58,7 @@ const TABS = [
 const STATUS_META = {
   running: { tone: 'accent', label: 'Building', icon: Loader2, spin: true },
   validating: { tone: 'amber', label: 'Validating…', icon: Loader2, spin: true },
+  recovering: { tone: 'violet', label: 'AI Repairing…', icon: Wand2, spin: true },
   completed: { tone: 'green', label: 'Completed', icon: CheckCircle2 },
   failed: { tone: 'red', label: 'Failed', icon: XCircle },
   validation_failed: { tone: 'red', label: 'Validation Failed', icon: ShieldAlert },
@@ -354,6 +355,7 @@ export default function ProjectWorkspace() {
   const meta = STATUS_META[project.status] || STATUS_META.completed;
   const StatusIcon = meta.icon;
   const hasFiles = files.length > 0;
+  const isRecovering = repairRunning || project.status === 'recovering';
 
   return (
     <div className="space-y-6">
@@ -409,7 +411,7 @@ export default function ProjectWorkspace() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={meta.tone} dot pulse={isBuilding || project.status === 'validating'}>
+          <Badge tone={meta.tone} dot pulse={isBuilding || project.status === 'validating' || project.status === 'recovering'}>
             <StatusIcon className={cn('mr-1 h-3.5 w-3.5', meta.spin && 'animate-spin')} />
             {isBuilding ? 'Building…' : meta.label}
           </Badge>
@@ -419,6 +421,11 @@ export default function ProjectWorkspace() {
             <Badge tone="green">
               <ShieldCheck className="mr-1 h-3.5 w-3.5" />
               Validated
+            </Badge>
+          ) : isRecovering ? (
+            <Badge tone="violet">
+              <Wand2 className="mr-1 h-3.5 w-3.5 animate-pulse" />
+              Auto-repairing
             </Badge>
           ) : project.validationStatus === 'failed' ? (
             <Badge tone="red">
@@ -465,11 +472,11 @@ export default function ProjectWorkspace() {
           <RefreshCw className={cn('h-4 w-4', isBuilding && 'animate-spin')} />
           Rebuild
         </Button>
-        <Button variant="secondary" onClick={handleValidate} loading={validating || validationRunning} disabled={isBuilding || !hasFiles}>
+        <Button variant="secondary" onClick={handleValidate} loading={validating || validationRunning} disabled={isBuilding || isRecovering || !hasFiles}>
           <Wrench className="h-4 w-4" />
           {project.validated ? 'Re-validate' : 'Validate & Fix'}
         </Button>
-        <Button variant="secondary" onClick={() => setRepairOpen(true)} loading={repairing} disabled={isBuilding || repairRunning || !hasFiles || validating || validationRunning}>
+        <Button variant="secondary" onClick={() => setRepairOpen(true)} loading={repairing} disabled={isBuilding || isRecovering || !hasFiles || validating || validationRunning}>
           <Wand2 className="h-4 w-4" />
           Repair with AI
         </Button>
@@ -545,8 +552,8 @@ export default function ProjectWorkspace() {
         </motion.div>
       )}
 
-      {/* Repair in progress banner */}
-      {!isBuilding && repairRunning && (
+      {/* Autonomous recovery banner */}
+      {!isBuilding && isRecovering && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -554,16 +561,16 @@ export default function ProjectWorkspace() {
         >
           <Wand2 className="h-5 w-5 animate-pulse text-violet-300" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-violet-200">AI repair in progress</p>
+            <p className="text-sm font-semibold text-violet-200">AI is automatically repairing this project…</p>
             <p className="truncate text-xs text-violet-200/70">
-              Regenerating the failing components, then running the full validation pipeline. This can take a few minutes.
+              Regenerating the failing components and re-running build validation. Nothing is needed from you — the project is updated as soon as validation passes.
             </p>
           </div>
         </motion.div>
       )}
 
       {/* Validation failure banner */}
-      {!isBuilding && !validationRunning && !validating && project.validated === false && project.validationStatus === 'failed' && (
+      {!isBuilding && !isRecovering && !validationRunning && !validating && project.validated === false && project.validationStatus === 'failed' && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}

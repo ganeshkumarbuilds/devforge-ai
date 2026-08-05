@@ -10,24 +10,23 @@ export function ProjectCard({ project, index = 0, onDelete, onToggleFavorite }) 
   const [menuOpen, setMenuOpen] = useState(false);
 
   const status = project.status;
-  const tone = status === 'completed' ? 'green' : status === 'running' || status === 'validating' ? 'accent' : status === 'failed' || status === 'validation_failed' ? 'red' : 'slate';
+  const busy = status === 'running' || status === 'validating' || status === 'recovering';
+  const tone = status === 'completed' ? 'green' : busy ? 'accent' : status === 'failed' || status === 'validation_failed' ? 'red' : 'slate';
   const label = projectStatusLabel(status);
-  const icon =
-    status === 'running' || status === 'validating' ? (
-      <Loader2 className="h-5 w-5 animate-spin" />
-    ) : status === 'failed' ? (
-      <AlertTriangle className="h-5 w-5" />
-    ) : status === 'validation_failed' ? (
-      <ShieldAlert className="h-5 w-5" />
-    ) : (
-      <FolderGit2 className="h-5 w-5" />
-    );
-  const iconBg =
-    status === 'running' || status === 'validating'
-      ? 'bg-accent/15 text-accent-soft'
-      : status === 'failed' || status === 'validation_failed'
-        ? 'bg-rose-500/15 text-rose-400'
-        : 'bg-emerald-500/15 text-emerald-400';
+  const icon = busy ? (
+    <Loader2 className="h-5 w-5 animate-spin" />
+  ) : status === 'failed' ? (
+    <AlertTriangle className="h-5 w-5" />
+  ) : status === 'validation_failed' ? (
+    <ShieldAlert className="h-5 w-5" />
+  ) : (
+    <FolderGit2 className="h-5 w-5" />
+  );
+  const iconBg = busy
+    ? 'bg-accent/15 text-accent-soft'
+    : status === 'failed' || status === 'validation_failed'
+      ? 'bg-rose-500/15 text-rose-400'
+      : 'bg-emerald-500/15 text-emerald-400';
   const favorite = Boolean(project.favorite);
 
   return (
@@ -104,7 +103,7 @@ export function ProjectCard({ project, index = 0, onDelete, onToggleFavorite }) 
         </p>
 
         <div className="mt-4 flex items-center gap-2">
-          <Badge tone={tone} dot pulse={status === 'running' || status === 'validating'}>
+          <Badge tone={tone} dot pulse={busy}>
             {label}
           </Badge>
           <Badge tone="violet">{project.stack || 'Auto'}</Badge>
