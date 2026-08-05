@@ -3,7 +3,13 @@ import { projectsApi } from '../api/projects';
 
 export function useProjects({ autoRefresh = false, intervalMs = 5000 } = {}) {
   const [projects, setProjects] = useState([]);
-  const [counts, setCounts] = useState({ running: 0, completed: 0, failed: 0 });
+  const [counts, setCounts] = useState({
+    running: 0,
+    validating: 0,
+    completed: 0,
+    failed: 0,
+    validation_failed: 0,
+  });
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

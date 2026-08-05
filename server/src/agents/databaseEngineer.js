@@ -1,4 +1,4 @@
-const { BaseAgent, normalizeFiles } = require('./baseAgent');
+const { BaseAgent, normalizeFiles, buildRepairInstruction } = require('./baseAgent');
 
 const SYSTEM_PROMPT = `You are the Database Engineer agent inside the DevForge AI platform. Given the product spec and architecture, design the database schema and generate database files.
 
@@ -35,9 +35,11 @@ class DatabaseEngineerAgent extends BaseAgent {
       stack: context.prd?.stack,
       architecture: context.architecture?.architecture,
     };
+    const repairInstruction = buildRepairInstruction(context, 'database');
+    const userContent = `Design data layer for:\n${JSON.stringify(spec, null, 2)}`;
     const messages = [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: `Design data layer for:\n${JSON.stringify(spec, null, 2)}` },
+      { role: 'user', content: repairInstruction ? `${userContent}\n\n${repairInstruction}` : userContent },
     ];
     const { parsed } = await this.runJson({ messages, temperature: 0.3, validateFn: validate, ...callbacks });
     const files = normalizeFiles(parsed);

@@ -424,6 +424,119 @@ class BaseAgent {
   }
 }
 
+const REPAIR_AREA_META = {
+  database: {
+    label: 'database layer',
+    prefixes: ['server/db/', 'server/prisma/', 'prisma/', 'server/db.sql'],
+  },
+  backend: {
+    label: 'backend',
+    prefixes: ['server/', 'api/', 'backend/'],
+  },
+  frontend: {
+    label: 'frontend',
+    prefixes: ['client/', 'web/', 'frontend/', 'front/'],
+  },
+  deployment: {
+    label: 'deployment files',
+    prefixes: ['Dockerfile', 'docker-compose', '.github/', 'nginx', 'render.yaml', 'railway', 'vercel', 'netlify'],
+  },
+  docs: {
+    label: 'documentation',
+    prefixes: ['docs/', 'README', 'API', 'architecture', 'setup', 'deployment', 'structure', 'ER'],
+  },
+};
+
+/**
+ * Turn free-form diagnostics into a compact, human-readable prompt section.
+ */
+function formatRepairDiagnostics(diagnostics) {
+  if (!diagnostics) return 'No diagnostics available.';
+  const lines = [];
+
+  if (diagnostics.validation && diagnostics.validation.latestRun) {
+    const run = diagnostics.validation.latestRun;
+    lines.push(`Last validation run: attempt ${run.attempt}, status ${run.status}`);
+    const failed = (run.steps || []).filter((s) => s.status === 'failed');
+    if (failed.length) {
+      for (const s of failed) {
+        lines.push(`- FAILED step "${s.name}": ${s.message || ''}`);
+        if (s.detail) lines.push(`    ${String(s.detail).slice(0, 1200)}`);
+      }
+    } else if (diagnostics.validation.project?.validationError) {
+      lines.push(`- Validation error: ${diagnostics.validation.project.validationError}`);
+    }
+  }
+
+  if (Array.isArray(diagnostics.apiContract) && diagnostics.apiContract.length) {
+    lines.push('API contract failures (frontend calls missing backend routes):');
+    for (const c of diagnostics.apiContract) {
+      lines.push(`- ${c.method} ${c.path} (called from ${c.file})`);
+    }
+  }
+
+  if (Array.isArray(diagnostics.runtime) && diagnostics.runtime.length) {
+    lines.push('Runtime / build errors:');
+    for (const e of diagnostics.runtime) lines.push(`- ${String(e).slice(0, 600)}`);
+  }
+
+  if (diagnostics.preview && diagnostics.preview.state) {
+    const p = diagnostics.preview;
+    lines.push(`Preview state: ${p.state}${p.error ? ` — error: ${String(p.error).slice(0, 600)}` : ''}`);
+  }
+
+  if (Array.isArray(diagnostics.e2e) && diagnostics.e2e.length) {
+    lines.push('End-to-end test failures:');
+    for (const e of diagnostics.e2e) lines.push(`- ${String(e).slice(0, 600)}`);
+  }
+
+  if (Array.isArray(diagnostics.buildLogs) && diagnostics.buildLogs.length) {
+    lines.push(`Build log tail (${diagnostics.buildLogs.length} entries):`);
+    for (const l of diagnostics.buildLogs.slice(-25)) {
+      lines.push(`[${l.level || 'info'}] ${l.source || ''}${l.message ? `: ${l.message}` : ''}`.slice(0, 500));
+    }
+  }
+
+  return lines.join('\n').slice(0, 14000);
+}
+
+/**
+ * Build the REPAIR instruction block appended to an engineer agent's prompt.
+ * Returns '' when this is a normal generation (no repair context).
+ */
+function buildRepairInstruction(context, area) {
+  if (!context || !context.repair) return '';
+  const meta = REPAIR_AREA_META[area];
+  const blocks = [
+    'THIS IS AN AUTOMATED REPAIR RUN. The project failed build validation and the pipeline is re-generating only the failing components.',
+    `You are responsible for the ${meta ? meta.label : area}. Fix the specific errors below.`,
+    'Rules:',
+    '- Regenerate ONLY the files you are responsible for. Do NOT touch or duplicate files owned by other agents.',
+    '- Keep the existing files that are working — return only files you change or create; unchanged files are left as-is automatically.',
+    '- The project may not be "completed" until validation passes; make your fixes complete and runnable.',
+  ];
+
+  if (meta && context.files && typeof context.files === 'object') {
+    const relevant = Object.entries(context.files).filter(([p]) =>
+      meta.prefixes.some((pf) => p === pf || p.startsWith(pf))
+    );
+    const parts = [];
+    let budget = 14000;
+    for (const [p, content] of relevant) {
+      const block = `### ${p}\n${String(content).slice(0, 5000)}\n`;
+      if (block.length > budget) break;
+      parts.push(block);
+      budget -= block.length;
+    }
+    if (parts.length) {
+      blocks.push(`CURRENT FILES IN YOUR AREA (edit them in place to fix errors):\n${parts.join('')}`);
+    }
+  }
+
+  blocks.push(`VALIDATION DIAGNOSTICS:\n${formatRepairDiagnostics(context.repair.diagnostics)}`);
+  return blocks.join('\n');
+}
+
 module.exports = {
   BaseAgent,
   AgentError,
@@ -433,4 +546,5 @@ module.exports = {
   isSafePath,
   normalizeFiles,
   sleep,
+  buildRepairInstruction,
 };

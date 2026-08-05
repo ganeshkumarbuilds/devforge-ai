@@ -17,6 +17,8 @@ const {
   exportDocs,
   getLogs,
   validate,
+  repairProject,
+  listRepairs,
   getStatus,
 } = require('../controllers/projectController');
 const {
@@ -44,6 +46,8 @@ router.patch('/:id', asyncHandler(updateProject));
 router.delete('/:id', asyncHandler(deleteProject));
 router.post('/:id/rebuild', asyncHandler(rebuildProject));
 router.post('/:id/validate', asyncHandler(validate));
+router.post('/:id/repair', asyncHandler(repairProject));
+router.get('/:id/repairs', asyncHandler(listRepairs));
 router.get('/:id/download', asyncHandler(downloadZip));
 router.get('/:id/logs', asyncHandler(getLogs));
 router.get('/:id/export/logs', asyncHandler(exportLogs));

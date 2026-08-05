@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.7",
+    "playwright": "^1.45.0",
     "prisma": "^6.16.2"
   }
 }

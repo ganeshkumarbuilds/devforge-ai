@@ -8,6 +8,7 @@ const { generatedDir } = require('../config');
 const { sleep } = require('../agents/baseAgent');
 const { writeLog } = require('./buildLogService');
 const { languageOf, IGNORED_DIRS } = require('../utils/fileUtils');
+const { finalizeGeneratedProject } = require('./finalizeService');
 
 const PROGRESS_THROTTLE_MS = 600;
 const OUTPUT_THROTTLE_MS = 700;
@@ -267,7 +268,15 @@ class Pipeline {
         }
       }
 
-      await this.setProject('completed');
+      // Generation finished. The project is NOT "completed" yet — it must pass
+      // the verification pipeline (static, API contract, build, health, E2E)
+      // before the controller may mark it Completed. This status tells the UI
+      // that the agents are done and automated verification is running.
+      if (this.aborted) {
+        await this.setProject('failed', 'Build aborted by user');
+        return;
+      }
+      await this.setProject('validating');
     } catch (err) {
       await this.setProject('failed', err.message).catch(() => {});
     }
@@ -277,14 +286,53 @@ class Pipeline {
     const agents = createAgents();
     const agent = agents.find((a) => a.role === role);
     if (!agent) throw new Error(`Unknown agent role: ${role}`);
+    return this.runAndFinalize([agent], {
+      summary: `Snapshot from single-agent run (${agent.role})`,
+      errorPrefix: `Agent "${agent.displayName}" retry failed`,
+    });
+  }
 
+  /**
+   * Run one or more agents, then hand the project to the shared verification
+   * pipeline. Only a passing validation marks the project "Completed".
+   * Returns the finalize result ({ ok, validation }) or { ok: false, error }.
+   */
+  async runAndFinalize(agentList, { summary, errorPrefix = 'Repair failed' } = {}) {
     await this.setProject('running');
     try {
-      await this.runAgentStep(agent);
-      await this.setProject('completed');
+      for (const agent of agentList) {
+        if (this.aborted) throw new Error('Repair aborted by user');
+        await this.runAgentStep(agent);
+      }
+
+      // The project is NOT "completed" yet — it must pass the same verification
+      // pipeline as a full build (static, API contract, build, health, E2E)
+      // before it may be marked Completed.
+      await this.setProject('validating');
+      return await finalizeGeneratedProject({
+        projectId: this.projectId,
+        prompt: this.prompt,
+        summary,
+        title: this.context.prd && this.context.prd.title,
+        files: this.context.files,
+      });
     } catch (err) {
-      await this.setProject('failed', `Agent "${agent.displayName}" retry failed: ${err.message}`);
+      await this.setProject('failed', `${errorPrefix}: ${err.message}`);
+      return { ok: false, error: err.message };
     }
+  }
+
+  /**
+   * Regenerate only the failing components. `roles` are the agent roles to
+   * re-run (e.g. backend-engineer); `repair` carries the diagnostics + area so
+   * the agents fix only their own component.
+   */
+  async runRepairAgents(roles, { summary, repair } = {}) {
+    const agents = createAgents();
+    const targets = roles.map((r) => agents.find((a) => a.role === r));
+    if (targets.some((a) => !a)) throw new Error(`Unknown agent role for repair: ${roles.join(', ')}`);
+    if (repair) this.context.repair = repair;
+    return this.runAndFinalize(targets, { summary, errorPrefix: 'AI repair failed' });
   }
 
   abort() {

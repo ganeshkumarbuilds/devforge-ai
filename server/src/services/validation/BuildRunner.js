@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const net = require('net');
+const http = require('http');
 const config = require('../../config');
 
 /**
@@ -144,11 +145,15 @@ async function runCommand({ cmd = npmBin(), args = [], cwd, timeoutMs, port }) {
  *  - If it begins listening on the chosen port, it started successfully.
  *  - If it stays alive until the timeout without exiting or listening, treat
  *    it as started (some backends do not read process.env.PORT).
- * The process is always terminated before resolving.
+ *
+ * With `keepAlive` the child is left running and resolved via `child` so a
+ * health probe / E2E suite can use it; the caller must call
+ * `killProcessTree(result.child)` when finished.
+ *
  * @returns {Promise<{ok:boolean, exitCode:number|null, timedOut:boolean, listening:boolean,
- *           output:string[], port:number|null, durationMs:number}>}
+ *           output:string[], port:number|null, child?:ChildProcess, durationMs:number}>}
  */
-async function runServer({ entry = null, cwd, timeoutMs }) {
+async function runServer({ entry = null, script = null, cwd, timeoutMs, keepAlive = false }) {
   const started = Date.now();
   const port = await freePort();
   const env = childEnv(port);
@@ -156,7 +161,7 @@ async function runServer({ entry = null, cwd, timeoutMs }) {
 
   return new Promise((resolve) => {
     const cmd = entry ? process.execPath : npmBin();
-    const args = entry ? [entry] : ['start'];
+    const args = entry ? [entry] : script ? ['run', script] : ['start'];
     const child = spawn(cmd, args, {
       cwd,
       env,
@@ -169,11 +174,12 @@ async function runServer({ entry = null, cwd, timeoutMs }) {
     let timedOut = false;
     let resolved = false;
     let listening = false;
+    let alive = false;
 
     const timer = setTimeout(() => {
       timedOut = true;
       if (!resolved) finish({ exitCode: null, listening, timedOut: true });
-      killProcessTree(child);
+      else killProcessTree(child);
     }, timeoutMs);
 
     const collect = (buf) => {
@@ -189,16 +195,24 @@ async function runServer({ entry = null, cwd, timeoutMs }) {
       if (resolved) return;
       resolved = true;
       clearTimeout(timer);
-      killProcessTree(child);
-      resolve({
-        ok: Boolean(extra.exitCode === 0 || extra.listening || (extra.timedOut && childAlive(extra.exitCode))),
+      const success = Boolean(extra.exitCode === 0 || extra.listening || (extra.timedOut && childAlive(extra.exitCode)));
+      const result = {
+        ok: success,
         exitCode: extra.exitCode,
         timedOut,
         listening: extra.listening || false,
         output,
         port,
         durationMs: Date.now() - started,
-      });
+      };
+      if (success && keepAlive) {
+        alive = true;
+        result.child = child;
+        result.keepAlive = true;
+      } else {
+        killProcessTree(child);
+      }
+      resolve(result);
     };
 
     const childAlive = (code) => code === null || code === undefined;
@@ -243,4 +257,33 @@ async function runServer({ entry = null, cwd, timeoutMs }) {
   });
 }
 
-module.exports = { npmBin, runCommand, runServer, freePort, isListening, connectOk, killProcessTree, childEnv };
+/**
+ * HTTP GET a URL and resolve with the status code (or null on failure).
+ * Useful for the /api/health probe and frontend load check.
+ */
+function httpGet(host, port, pathname, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host,
+        port,
+        path: pathname || '/',
+        method: 'GET',
+        timeout: timeoutMs,
+        headers: { accept: '*/*', 'user-agent': 'DevForge-Validator' },
+      },
+      (res) => {
+        res.resume();
+        resolve({ status: res.statusCode || 200, headers: res.headers });
+      }
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.on('error', () => resolve(null));
+    req.end();
+  });
+}
+
+module.exports = { npmBin, runCommand, runServer, httpGet, freePort, isListening, connectOk, killProcessTree, childEnv };

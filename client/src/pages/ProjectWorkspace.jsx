@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   Wrench,
+  Wand2,
 } from 'lucide-react';
 import { projectsApi } from '../api/projects';
 import { useToast } from '../context/ToastContext';
@@ -56,9 +57,22 @@ const TABS = [
 
 const STATUS_META = {
   running: { tone: 'accent', label: 'Building', icon: Loader2, spin: true },
+  validating: { tone: 'amber', label: 'Validating…', icon: Loader2, spin: true },
   completed: { tone: 'green', label: 'Completed', icon: CheckCircle2 },
   failed: { tone: 'red', label: 'Failed', icon: XCircle },
+  validation_failed: { tone: 'red', label: 'Validation Failed', icon: ShieldAlert },
 };
+
+const REPAIR_AREAS = [
+  { key: 'all', label: 'Entire project', desc: 'Re-run all production agents to fix every failing component' },
+  { key: 'backend', label: 'Backend only', desc: 'Fix server routes, controllers and API endpoints' },
+  { key: 'frontend', label: 'Frontend only', desc: 'Fix client components, pages and API calls' },
+  { key: 'database', label: 'Database only', desc: 'Fix schema, migrations and data layer' },
+  { key: 'docs', label: 'Documentation only', desc: 'Regenerate README and documentation files' },
+  { key: 'deployment', label: 'Deployment files only', desc: 'Regenerate Dockerfile, CI and hosting config' },
+];
+
+const REPAIR_AREA_LABEL = Object.fromEntries(REPAIR_AREAS.map((a) => [a.key, a.label]));
 
 export default function ProjectWorkspace() {
   const { projectId } = useParams();
@@ -90,6 +104,22 @@ export default function ProjectWorkspace() {
   const [validationRunning, setValidationRunning] = useState(false);
   const [validating, setValidating] = useState(false);
   const [validationOpen, setValidationOpen] = useState(false);
+  const [repairOpen, setRepairOpen] = useState(false);
+  const [repairArea, setRepairArea] = useState('all');
+  const [repairing, setRepairing] = useState(false);
+  const [repairRunning, setRepairRunning] = useState(false);
+  const [repairs, setRepairs] = useState([]);
+  const [repairsOpen, setRepairsOpen] = useState(false);
+  const prevRepairRunning = useRef(false);
+
+  const loadRepairs = useCallback(async () => {
+    try {
+      const data = await projectsApi.listRepairs(projectId);
+      setRepairs(data.repairs || []);
+    } catch {
+      /* repairs are optional */
+    }
+  }, [projectId]);
 
   const load = useCallback(async () => {
     try {
@@ -102,6 +132,7 @@ export default function ProjectWorkspace() {
       setCounts(data.counts || {});
       setValidation(data.validation || null);
       setValidationRunning(Boolean(data.validationRunning));
+      setRepairRunning(Boolean(data.repairRunning));
       setError(null);
       return data;
     } catch (err) {
@@ -136,6 +167,14 @@ export default function ProjectWorkspace() {
     const data = await load();
     if (data && data.isBuilding) {
       loadLogs();
+    }
+    const wasRepairing = prevRepairRunning.current;
+    const isRepairing = Boolean(data?.repairRunning);
+    prevRepairRunning.current = isRepairing;
+    if (isRepairing) {
+      loadRepairs();
+    } else if (wasRepairing) {
+      loadRepairs();
     }
   }, 3000, { immediate: true });
 
@@ -197,6 +236,28 @@ export default function ProjectWorkspace() {
       setValidationRunning(false);
       load();
     }
+  };
+
+  const handleRepair = async () => {
+    if (repairing || repairRunning || validating || validationRunning) return;
+    setRepairing(true);
+    setRepairOpen(false);
+    try {
+      await projectsApi.repair(projectId, repairArea);
+      setRepairRunning(true);
+      prevRepairRunning.current = true;
+      toast.success('Repair started', 'The AI repair agent is fixing the failing components.');
+      loadRepairs();
+    } catch (err) {
+      toast.error('Repair could not start', err.message);
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const openRepairs = () => {
+    setRepairsOpen(true);
+    loadRepairs();
   };
 
   const handleExportDocs = async (format) => {
@@ -348,7 +409,7 @@ export default function ProjectWorkspace() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={meta.tone} dot pulse={isBuilding}>
+          <Badge tone={meta.tone} dot pulse={isBuilding || project.status === 'validating'}>
             <StatusIcon className={cn('mr-1 h-3.5 w-3.5', meta.spin && 'animate-spin')} />
             {isBuilding ? 'Building…' : meta.label}
           </Badge>
@@ -408,6 +469,15 @@ export default function ProjectWorkspace() {
           <Wrench className="h-4 w-4" />
           {project.validated ? 'Re-validate' : 'Validate & Fix'}
         </Button>
+        <Button variant="secondary" onClick={() => setRepairOpen(true)} loading={repairing} disabled={isBuilding || repairRunning || !hasFiles || validating || validationRunning}>
+          <Wand2 className="h-4 w-4" />
+          Repair with AI
+        </Button>
+        {repairs.length > 0 && (
+          <Button variant="ghost" onClick={openRepairs} className="shrink-0" aria-label="Repair history">
+            <History className="h-4 w-4" />
+          </Button>
+        )}
         <Button variant="danger" onClick={() => setDeleteOpen(true)} className="ml-auto">
           <Trash2 className="h-4 w-4" />
           Delete
@@ -475,6 +545,23 @@ export default function ProjectWorkspace() {
         </motion.div>
       )}
 
+      {/* Repair in progress banner */}
+      {!isBuilding && repairRunning && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 rounded-2xl border border-violet-500/30 bg-violet-500/10 p-4"
+        >
+          <Wand2 className="h-5 w-5 animate-pulse text-violet-300" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-violet-200">AI repair in progress</p>
+            <p className="truncate text-xs text-violet-200/70">
+              Regenerating the failing components, then running the full validation pipeline. This can take a few minutes.
+            </p>
+          </div>
+        </motion.div>
+      )}
+
       {/* Validation failure banner */}
       {!isBuilding && !validationRunning && !validating && project.validated === false && project.validationStatus === 'failed' && (
         <motion.div
@@ -489,11 +576,14 @@ export default function ProjectWorkspace() {
               {project.validationError || 'This project has not passed build validation and cannot be exported or previewed.'}
             </p>
             <p className="mt-1 text-xs text-rose-300/60">
-              The self-healing pipeline repairs missing files, broken imports and failing builds automatically — run Validate &amp; Fix.
+              The self-healing pipeline repairs missing files, broken imports and failing builds automatically — run Validate &amp; Fix or Repair with AI.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button variant="danger" size="sm" onClick={handleValidate} loading={validating || validationRunning}>
                 <Wrench className="h-4 w-4" /> Validate &amp; Fix
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setRepairOpen(true)} disabled={repairRunning || validating || validationRunning}>
+                <Wand2 className="h-4 w-4" /> Repair with AI
               </Button>
               {validation && (
                 <Button variant="ghost" size="sm" onClick={() => setValidationOpen(true)}>
@@ -663,6 +753,97 @@ export default function ProjectWorkspace() {
                 </pre>
               </div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Repair with AI modal */}
+      <Modal
+        open={repairOpen}
+        onClose={() => setRepairOpen(false)}
+        title="Repair with AI"
+        description="Regenerate only the failing components, then re-run the full validation pipeline. The repair only succeeds when validation passes."
+        size="lg"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRepairOpen(false)}>Cancel</Button>
+            <Button onClick={handleRepair} loading={repairing} disabled={repairRunning || validating || validationRunning}>
+              <Wand2 className="h-4 w-4" /> Start AI repair
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          {REPAIR_AREAS.map((a) => (
+            <button
+              key={a.key}
+              onClick={() => setRepairArea(a.key)}
+              className={cn(
+                'rounded-xl border p-4 text-left transition-all duration-200',
+                repairArea === a.key
+                  ? 'border-violet-500/60 bg-violet-500/10 text-white'
+                  : 'border-white/10 bg-base-800/60 text-slate-300 hover:border-white/25'
+              )}
+            >
+              <p className="text-sm font-semibold">{a.label}</p>
+              <p className="mt-1 text-xs text-slate-500">{a.desc}</p>
+            </button>
+          ))}
+        </div>
+      </Modal>
+
+      {/* Repair history modal */}
+      <Modal
+        open={repairsOpen}
+        onClose={() => setRepairsOpen(false)}
+        title="Repair history"
+        description="Every AI repair run with the files it modified and its validation result."
+        size="lg"
+        footer={
+          <Button variant="ghost" onClick={() => setRepairsOpen(false)}>Close</Button>
+        }
+      >
+        {repairs.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-500">No AI repairs have been run yet.</p>
+        ) : (
+          <div className="space-y-4">
+            {repairs.map((r) => {
+              const ok = r.status === 'passed';
+              return (
+                <div key={r.id} className="rounded-xl border border-white/10 bg-base-800/60 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={ok ? 'green' : r.status === 'running' ? 'amber' : 'red'}>
+                      {ok ? 'Passed' : r.status === 'running' ? 'Running' : 'Failed'}
+                    </Badge>
+                    <span className="text-sm font-semibold text-white">
+                      {REPAIR_AREA_LABEL[r.area] || r.area}
+                    </span>
+                    <span className="text-xs text-slate-500">· {formatDateTime(r.createdAt)}</span>
+                    {r.model && <span className="ml-auto text-xs text-slate-500">model: {r.model}</span>}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {(r.filesModified || []).length > 0 ? (
+                      r.filesModified.map((f) => (
+                        <span key={f} className="rounded-md border border-white/10 bg-black/30 px-2 py-0.5 font-mono text-[11px] text-slate-400">
+                          {f}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-500">No files changed</span>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                    <span>
+                      Validation: {r.validationResult ? (r.validationResult.ok ? 'passed' : 'failed') : '—'}
+                      {typeof r.validationResult?.attempts === 'number' && ` (attempt ${r.validationResult.attempts})`}
+                    </span>
+                    {r.error && <span className="text-rose-400">error: {r.error}</span>}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </Modal>

@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, FileCode2, FolderGit2, Loader2, AlertTriangle } from 'lucide-react';
+import { ArrowRight, FileCode2, FolderGit2, Loader2, AlertTriangle, ShieldAlert } from 'lucide-react';
 import Card from '../ui/Card';
 import Badge from '../ui/Badge';
-import { cn, statusTone, timeAgo, truncate } from '../../lib/utils';
+import { cn, statusTone, timeAgo, truncate, projectStatusLabel } from '../../lib/utils';
 
 export default function RecentProjects({ projects = [], onViewAll }) {
   return (
@@ -48,17 +48,19 @@ export default function RecentProjects({ projects = [], onViewAll }) {
                 <div
                   className={cn(
                     'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl',
-                    p.status === 'running'
+                    p.status === 'running' || p.status === 'validating'
                       ? 'bg-accent/15 text-accent-soft'
-                      : p.status === 'failed'
+                      : p.status === 'failed' || p.status === 'validation_failed'
                         ? 'bg-rose-500/15 text-rose-400'
                         : 'bg-emerald-500/15 text-emerald-400'
                   )}
                 >
-                  {p.status === 'running' ? (
+                  {p.status === 'running' || p.status === 'validating' ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : p.status === 'failed' ? (
                     <AlertTriangle className="h-4 w-4" />
+                  ) : p.status === 'validation_failed' ? (
+                    <ShieldAlert className="h-4 w-4" />
                   ) : (
                     <FolderGit2 className="h-4 w-4" />
                   )}
@@ -72,8 +74,8 @@ export default function RecentProjects({ projects = [], onViewAll }) {
                   </p>
                 </div>
                 <div className="hidden shrink-0 items-center gap-2 sm:flex">
-                  <Badge tone={tone} dot={p.status === 'running'} pulse={p.status === 'running'}>
-                    {p.status === 'running' ? 'Building' : p.status}
+                  <Badge tone={tone} dot pulse={p.status === 'running' || p.status === 'validating'}>
+                    {projectStatusLabel(p.status)}
                   </Badge>
                   <span className="inline-flex items-center gap-1 text-xs text-slate-500">
                     <FileCode2 className="h-3.5 w-3.5" /> {p.fileCount ?? 0}

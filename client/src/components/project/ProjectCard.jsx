@@ -1,17 +1,33 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { FolderGit2, FileCode2, Bot, ArrowRight, Loader2, AlertTriangle, MoreHorizontal, Trash2, Eye, Star } from 'lucide-react';
+import { FolderGit2, FileCode2, Bot, ArrowRight, Loader2, AlertTriangle, ShieldAlert, MoreHorizontal, Trash2, Eye, Star } from 'lucide-react';
 import Card from '../ui/Card';
 import Badge from '../ui/Badge';
-import { cn, formatDate, truncate } from '../../lib/utils';
+import { cn, formatDate, truncate, projectStatusLabel } from '../../lib/utils';
 import { useState } from 'react';
 
 export function ProjectCard({ project, index = 0, onDelete, onToggleFavorite }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const status = project.status;
-  const tone = status === 'completed' ? 'green' : status === 'running' ? 'accent' : status === 'failed' ? 'red' : 'slate';
-  const label = status === 'running' ? 'Building' : status;
+  const tone = status === 'completed' ? 'green' : status === 'running' || status === 'validating' ? 'accent' : status === 'failed' || status === 'validation_failed' ? 'red' : 'slate';
+  const label = projectStatusLabel(status);
+  const icon =
+    status === 'running' || status === 'validating' ? (
+      <Loader2 className="h-5 w-5 animate-spin" />
+    ) : status === 'failed' ? (
+      <AlertTriangle className="h-5 w-5" />
+    ) : status === 'validation_failed' ? (
+      <ShieldAlert className="h-5 w-5" />
+    ) : (
+      <FolderGit2 className="h-5 w-5" />
+    );
+  const iconBg =
+    status === 'running' || status === 'validating'
+      ? 'bg-accent/15 text-accent-soft'
+      : status === 'failed' || status === 'validation_failed'
+        ? 'bg-rose-500/15 text-rose-400'
+        : 'bg-emerald-500/15 text-emerald-400';
   const favorite = Boolean(project.favorite);
 
   return (
@@ -24,11 +40,8 @@ export function ProjectCard({ project, index = 0, onDelete, onToggleFavorite }) 
       <Card className="flex h-full flex-col p-5 transition-all duration-300 hover:border-accent/40 hover:shadow-xl hover:shadow-accent/5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <div className={cn(
-              'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
-              status === 'running' ? 'bg-accent/15 text-accent-soft' : status === 'failed' ? 'bg-rose-500/15 text-rose-400' : 'bg-emerald-500/15 text-emerald-400'
-            )}>
-              {status === 'running' ? <Loader2 className="h-5 w-5 animate-spin" /> : status === 'failed' ? <AlertTriangle className="h-5 w-5" /> : <FolderGit2 className="h-5 w-5" />}
+            <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', iconBg)}>
+              {icon}
             </div>
             <div className="min-w-0">
               <Link to={`/app/projects/${project.id}`} className="block">
@@ -91,7 +104,7 @@ export function ProjectCard({ project, index = 0, onDelete, onToggleFavorite }) 
         </p>
 
         <div className="mt-4 flex items-center gap-2">
-          <Badge tone={tone} dot pulse={status === 'running'}>
+          <Badge tone={tone} dot pulse={status === 'running' || status === 'validating'}>
             {label}
           </Badge>
           <Badge tone="violet">{project.stack || 'Auto'}</Badge>

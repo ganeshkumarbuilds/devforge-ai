@@ -36,8 +36,10 @@ import { cn, formatDuration, formatNumber } from '../lib/utils';
 const FILTERS = [
   { key: '', label: 'All' },
   { key: 'running', label: 'Running' },
+  { key: 'validating', label: 'Validating' },
   { key: 'completed', label: 'Completed' },
   { key: 'failed', label: 'Failed' },
+  { key: 'validation_failed', label: 'Validation Failed' },
 ];
 
 export default function DashboardPage() {
@@ -97,7 +99,7 @@ export default function DashboardPage() {
     [stats]
   );
 
-  const statusTotal = counts.running + counts.completed + counts.failed;
+  const statusTotal = counts.running + counts.validating + counts.completed + counts.failed + counts.validation_failed;
 
   const handleGenerate = async ({ prompt, stack }) => {
     setGenerating(true);
@@ -161,15 +163,15 @@ export default function DashboardPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
-        <StatCard
-          icon={FolderGit2}
-          label="Projects"
-          value={statusTotal}
-          hint={`${counts.running} building now`}
-          tone="accent"
-          spark={buildSpark}
-          index={0}
-        />
+          <StatCard
+            icon={FolderGit2}
+            label="Projects"
+            value={statusTotal}
+            hint={`${counts.running} building · ${counts.validating} verifying`}
+            tone="accent"
+            spark={buildSpark}
+            index={0}
+          />
         <StatCard
           icon={TrendingUp}
           label="Success rate"
@@ -237,6 +239,12 @@ export default function DashboardPage() {
               <span className="chip border border-accent/30 bg-accent/10 text-accent-soft">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
                 {counts.running} building
+              </span>
+            )}
+            {counts.validating > 0 && (
+              <span className="chip border border-amber-500/30 bg-amber-500/10 text-amber-300">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+                {counts.validating} validating
               </span>
             )}
           </div>

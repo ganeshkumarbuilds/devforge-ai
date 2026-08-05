@@ -511,7 +511,7 @@ function findUnresolvedImports(files) {
 // AI self-healing
 // ---------------------------------------------------------------------------
 
-const REPAIR_SYSTEM_PROMPT = `You are the AI Self-Healing agent inside DevForge AI. A generated project failed validation (missing files, broken imports, syntax errors, missing dependencies, build or startup failure). Fix the project so it builds and runs.
+const REPAIR_SYSTEM_PROMPT = `You are the AI Self-Healing agent inside DevForge AI. A generated project failed validation (missing files, broken imports, syntax errors, missing dependencies, missing API endpoints, failing build/startup or failing end-to-end tests). Fix the project so every validation stage passes: static structure, API contract (every frontend fetch/axios call must have a matching backend route), build, runtime health, and E2E (register/login/CRUD/logout).
 
 Return ONLY a single JSON object, no markdown fences, no explanations:
 {
@@ -524,6 +524,8 @@ Return ONLY a single JSON object, no markdown fences, no explanations:
 Rules:
 - Include the COMPLETE corrected content for every file you change.
 - Fix syntax errors, broken imports, missing requires, invalid JSX, invalid routes, wrong package.json scripts, and missing dependencies.
+- If the "missing endpoints" section lists API routes the frontend calls (e.g. POST /api/items), ADD those routes + controllers to the backend and mount them (e.g. app.use('/api/items', require('./routes/items'))). Return the FULL corrected router/entry file, not a fragment.
+- For E2E failures (register/login/CRUD/logout), make sure the backend exposes /api/auth/register, /api/auth/login, /api/auth/logout and a CRUD resource (create/update/delete on a collection), using a JWT or simple token flow and an in-memory or sqlite store.
 - Prefer minimal changes; do not rewrite healthy files.
 - Keep React/Vite entrypoints standard: client/index.html must load /src/main.jsx, and src/main.jsx must render App.
 - Escape all newlines as \\n and double quotes as \\\" inside JSON string content.
@@ -532,7 +534,7 @@ Rules:
 /**
  * Ask the model to repair the project based on the latest validation failure.
  * @param {Object<string,string>} files
- * @param {{step?: string, dir?: string, logs?: string[], error?: string, unresolved?: string[]}} diagnostics
+ * @param {{step?: string, dir?: string, logs?: string[], error?: string, unresolved?: string[], apiContract?: any[], e2e?: string[]}} diagnostics
  * @returns {Promise<{path:string, content:string}[]>} files to apply (possibly empty)
  */
 async function aiRepair(files, diagnostics = {}) {
@@ -544,6 +546,12 @@ async function aiRepair(files, diagnostics = {}) {
   const error = String(diagnostics.error || 'Unknown validation error').slice(0, 1500);
   const logs = Array.isArray(diagnostics.logs) ? diagnostics.logs.slice(-80).join('\n').slice(0, 4000) : '';
   const unresolved = Array.isArray(diagnostics.unresolved) ? diagnostics.unresolved.slice(0, 40).join('\n') : '';
+  const apiContract = Array.isArray(diagnostics.apiContract) && diagnostics.apiContract.length
+    ? diagnostics.apiContract.map((m) => `${m.method} ${m.path} (called from ${m.file})`).slice(0, 40).join('\n')
+    : '';
+  const e2e = Array.isArray(diagnostics.e2e) && diagnostics.e2e.length
+    ? diagnostics.e2e.slice(0, 20).join('\n')
+    : '';
 
   // Curate the most relevant files for the model (package manifests + entry
   // points + anything the error message mentions).
@@ -599,6 +607,12 @@ ${logs}
 
 Unresolved imports detected:
 ${unresolved || '(none detected)'}
+
+Missing API endpoints (frontend calls with no matching backend route):
+${apiContract || '(none)'}
+
+End-to-end test failures:
+${e2e || '(none)'}
 
 Return the corrected files as JSON.`;
 

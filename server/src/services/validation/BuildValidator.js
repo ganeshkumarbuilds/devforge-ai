@@ -10,19 +10,24 @@ const BuildRunner = require('./BuildRunner');
 const DependencyInstaller = require('./DependencyInstaller');
 const ProjectRepairService = require('./ProjectRepairService');
 const ValidationReporter = require('./ValidationReporter');
+const staticValidator = require('./staticValidator');
+const apiContractValidator = require('./apiContractValidator');
+const runtimeValidator = require('./runtimeValidator');
+const e2eValidator = require('./e2eValidator');
 
 /**
  * BuildValidator — orchestrator of the Build Validation Pipeline.
  *
  * Runs automatically after project generation and before any ZIP export or
- * Live Preview. For each project it:
- *   1. syncs generated files to disk
- *   2. ensures the required file structure (regenerating anything missing)
- *   3. installs dependencies
- *   4. builds the frontend (npm run build)
- *   5. starts the backend (npm start) and verifies it boots
- *   6. on failure, self-heals (deterministic templates + AI) and retries
- * until the project passes, up to VALIDATION_MAX_RETRIES times.
+ * Live Preview. For each project it runs up to VALIDATION_MAX_RETRIES attempts
+ * of the full verification pipeline:
+ *   1. structure  — static validation of required files (regenerating missing)
+ *   2. api-contract — frontend fetch/axios calls vs backend Express routes
+ *   3. install    — npm install for client/server
+ *   4. build      — frontend build (+ backend build when a build script exists)
+ *   5. runtime    — backend start + GET /api/health == 200 + frontend loads
+ *   6. e2e        — register/login/create/update/delete/logout (Playwright + API)
+ * On failure it self-heals (deterministic templates + AI repair) and retries.
  */
 
 const CLIENT_DIRS = ['client', 'web', 'frontend', 'front'];
@@ -128,104 +133,126 @@ function makeStep(name, status, message, detail, durationMs, dir = null) {
   return { name, status, message, detail, durationMs, dir };
 }
 
+/**
+ * Run one full validation attempt against a project. Stages:
+ *   1. structure  — deterministic repair + static validation (fails on missing files)
+ *   2. api-contract — frontend calls vs backend routes (fails on missing endpoints)
+ *   3. install    — npm install for client/server
+ *   4. build      — frontend build (+ backend build when a build script exists)
+ *   5. runtime    — backend start + GET /api/health == 200 + frontend loads
+ *   6. e2e        — Playwright / API-level register, login, CRUD, logout
+ *
+ * @returns {Promise<{passed: boolean, apiContractMissing: any[], e2e: object|null}>}
+ */
 async function validateOnce(projectId, attempt, steps) {
   const files = await loadFiles(projectId);
   const layout = detectLayout(files);
   const results = [];
+  const outcome = { passed: false, apiContractMissing: [], e2e: null };
 
-  // 1. Structure — regenerate missing files deterministically.
-  const t0 = Date.now();
+  // 1. Structure — regenerate missing files, then fail if anything required is still absent.
+  let t0 = Date.now();
   const changed = ProjectRepairService.repairAll(files, layout);
   if (changed.length) {
     await writeFilesToDisk(projectId, files);
     await syncDiskToDb(projectId, files);
   }
+  const staticResult = config.validationStaticEnabled ? staticValidator.validate(files, layout) : { ok: true, missing: [] };
   steps.push(
     makeStep(
       'structure',
-      'passed',
-      changed.length ? `Regenerated missing files: ${changed.length} file(s).` : 'All required files present.',
-      changed.length ? changed.join('\n') : null,
+      staticResult.ok ? 'passed' : 'failed',
+      staticResult.ok
+        ? changed.length
+          ? `Regenerated ${changed.length} missing file(s); all required files present.`
+          : 'All required files present.'
+        : `${staticResult.missing.length} required file(s) missing.`,
+      staticResult.ok ? (changed.length ? changed.join('\n') : null) : staticResult.missing.map((m) => `${m.category}: ${m.path} — ${m.hint}`).join('\n'),
       Date.now() - t0
     )
   );
+  results.push(staticResult.ok);
 
-  // 2. Install dependencies for every package directory.
-  const dirs = [];
-  if (layout.clientDir !== null) dirs.push({ dir: layout.clientDir, label: 'client' });
-  if (layout.serverDir !== null) dirs.push({ dir: layout.serverDir, label: 'server' });
+  // 2. API Contract — frontend calls must be satisfiable by backend routes.
+  t0 = Date.now();
+  const contractResult = config.validationApiContractEnabled
+    ? apiContractValidator.validate(files, layout)
+    : { ok: true, frontendCalls: 0, backendRoutes: 0, missing: [], unused: [] };
+  outcome.apiContractMissing = contractResult.missing || [];
+  steps.push(
+    makeStep(
+      'api-contract',
+      contractResult.ok ? 'passed' : 'failed',
+      contractResult.ok
+        ? `API contract passed (${contractResult.frontendCalls} frontend call(s), ${contractResult.backendRoutes} backend route(s)).`
+        : `${contractResult.missing.length} endpoint(s) called by the frontend are missing on the backend.`,
+      contractResult.ok ? null : contractResult.missing.map((m) => `${m.method} ${m.path} (from ${m.file})`).join('\n'),
+      Date.now() - t0
+    )
+  );
+  results.push(contractResult.ok);
 
-  if (dirs.length === 0) {
-    steps.push(makeStep('install', 'passed', 'No Node.js package directories found.', null, 0));
+  // 3. Install dependencies.
+  const installSteps = await runtimeValidator.installAll(projectId, layout);
+  steps.push(...installSteps);
+  installSteps.forEach((s) => results.push(s.status === 'passed'));
+
+  // 4. Build frontend + backend.
+  const frontendBuild = await runtimeValidator.buildFrontend(projectId, layout);
+  if (frontendBuild) {
+    steps.push(frontendBuild);
+    results.push(frontendBuild.ok);
+  }
+  const backendBuild = await runtimeValidator.buildBackend(projectId, layout);
+  if (backendBuild) {
+    steps.push(backendBuild);
+    results.push(backendBuild.ok);
+  }
+
+  // 5. Runtime — start the backend (kept alive for E2E), require /api/health == 200,
+  //    then serve the built frontend and require it to load.
+  let backend = null;
+  let frontendServer = null;
+  const startRes = await runtimeValidator.startBackendLive(projectId, layout);
+  steps.push(startRes.step);
+  results.push(startRes.ok);
+  backend = startRes.backend;
+
+  const frontendRes = await runtimeValidator.verifyFrontendLoads(projectId, layout);
+  steps.push(frontendRes.step);
+  results.push(frontendRes.ok);
+  frontendServer = frontendRes.server;
+
+  // 6. End-to-end tests (register/login/create/update/delete/logout).
+  let e2eRes = null;
+  if (config.validationE2eEnabled) {
+    e2eRes = await e2eValidator.runE2E({ projectId, files, layout, backend });
+    outcome.e2e = e2eRes;
+    steps.push(...e2eRes.steps);
+    results.push(e2eRes.ok);
   } else {
-    const root = previewService.safeProjectDir(projectId);
-    for (const d of dirs) {
-      const res = await DependencyInstaller.install(path.join(root, d.dir));
-      const ok = res.ok;
-      results.push(ok);
-      steps.push(
-        makeStep(
-          'install',
-          ok ? 'passed' : 'failed',
-          ok ? `Dependencies installed for ${d.dir}.` : `npm install failed for ${d.dir}.`,
-          ok ? null : res.output.slice(-80).join('\n'),
-          res.durationMs,
-          d.dir
-        )
-      );
-    }
+    steps.push(makeStep('e2e', 'skipped', 'E2E testing disabled — skipped.', null, 0));
   }
 
-  // 3. Build the frontend.
-  if (layout.clientDir !== null) {
-    const clientPath = path.join(previewService.safeProjectDir(projectId), layout.clientDir);
-    const res = await BuildRunner.runCommand({
-      args: ['run', 'build'],
-      cwd: clientPath,
-      timeoutMs: config.validationCommandTimeoutMs,
-    });
-    const ok = res.ok;
-    results.push(ok);
-    steps.push(
-      makeStep(
-        'build',
-        ok ? 'passed' : 'failed',
-        ok ? 'Frontend build succeeded.' : `Frontend build failed (exit ${res.exitCode}).`,
-        ok ? null : res.output.slice(-80).join('\n'),
-        res.durationMs,
-        layout.clientDir
-      )
-    );
-  }
+  // Always clean up the live backend + static frontend server.
+  if (backend && backend.child) BuildRunner.killProcessTree(backend.child);
+  if (frontendServer) await frontendServer.close().catch(() => {});
 
-  // 4. Start the backend and verify it boots.
-  if (layout.serverDir !== null) {
-    const serverPath = path.join(previewService.safeProjectDir(projectId), layout.serverDir);
-    const entry = resolveServerEntry(files, layout.serverDir);
-    const res = await BuildRunner.runServer({ entry, cwd: serverPath, timeoutMs: config.validationStartTimeoutMs });
-    const ok = res.ok;
-    results.push(ok);
-    steps.push(
-      makeStep(
-        'start',
-        ok ? 'passed' : 'failed',
-        ok ? 'Backend started successfully.' : `Backend failed to start${res.exitCode != null ? ` (exit ${res.exitCode})` : ''}.`,
-        ok ? null : res.output.slice(-80).join('\n'),
-        res.durationMs,
-        layout.serverDir
-      )
-    );
-  }
-
-  return results.length === 0 || results.every(Boolean);
+  outcome.passed = results.length === 0 || results.every(Boolean);
+  return outcome;
 }
 
 async function selfHeal(projectId, files, diagnostics) {
   const layout = detectLayout(files);
-  const deterministic = ProjectRepairService.repairAll(files, layout);
-  const ai = await ProjectRepairService.aiRepair(files, diagnostics);
+  const applied = new Set(ProjectRepairService.repairAll(files, layout));
 
-  const applied = new Set(deterministic);
+  // Deterministic API-contract repair: regenerate missing routes/controllers.
+  if (config.validationApiContractEnabled && Array.isArray(diagnostics.apiContract) && diagnostics.apiContract.length) {
+    const apiChanged = apiContractValidator.repair(files, layout, diagnostics.apiContract);
+    apiChanged.forEach((f) => applied.add(f));
+  }
+
+  const ai = await ProjectRepairService.aiRepair(files, diagnostics);
   for (const f of ai) {
     if (f && f.path && typeof f.content === 'string') {
       files[f.path] = f.content;
@@ -270,10 +297,10 @@ async function runValidation(projectId) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     lastAttempt = attempt;
     const attemptSteps = [];
-    const passed = await validateOnce(projectId, attempt, attemptSteps);
+    const outcome = await validateOnce(projectId, attempt, attemptSteps);
     allSteps.push(...attemptSteps);
 
-    if (passed) {
+    if (outcome.passed) {
       ok = true;
       break;
     }
@@ -289,12 +316,17 @@ async function runValidation(projectId) {
         message: `Validation attempt ${attempt} failed: ${lastError} — self-healing and retrying.`,
       });
       const files = await loadFiles(projectId);
+      const e2eDetails = outcome.e2e
+        ? outcome.e2e.steps.filter((s) => s.status === 'failed').map((s) => `${s.name}: ${s.message}`)
+        : [];
       await selfHeal(projectId, files, {
         step: failed?.name || 'unknown',
         dir: failed?.dir || null,
         error: lastError,
         logs: attemptSteps.flatMap((s) => (s.detail ? String(s.detail).split('\n') : [])),
         unresolved: ProjectRepairService.findUnresolvedImports(files),
+        apiContract: outcome.apiContractMissing || [],
+        e2e: e2eDetails,
       });
     }
   }

@@ -1,4 +1,4 @@
-const { BaseAgent, normalizeFiles } = require('./baseAgent');
+const { BaseAgent, normalizeFiles, buildRepairInstruction } = require('./baseAgent');
 
 const SYSTEM_PROMPT = `You are the Frontend Engineer agent inside the DevForge AI platform. Given the product spec and backend API, generate frontend web application files.
 
@@ -35,9 +35,11 @@ class FrontendEngineerAgent extends BaseAgent {
       features: context.prd?.features,
       backendFiles: (context.backend?.files || []).map((f) => f.path),
     };
+    const repairInstruction = buildRepairInstruction(context, 'frontend');
+    const userContent = `Build frontend for:\n${JSON.stringify(spec, null, 2)}`;
     const messages = [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: `Build frontend for:\n${JSON.stringify(spec, null, 2)}` },
+      { role: 'user', content: repairInstruction ? `${userContent}\n\n${repairInstruction}` : userContent },
     ];
     const { parsed } = await this.runJson({ messages, temperature: 0.3, validateFn: validate, ...callbacks });
     const files = normalizeFiles(parsed);

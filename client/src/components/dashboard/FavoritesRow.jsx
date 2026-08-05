@@ -1,9 +1,9 @@
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Star, FolderGit2, Loader2, AlertTriangle, ArrowRight } from 'lucide-react';
+import { Star, FolderGit2, Loader2, AlertTriangle, ShieldAlert, ArrowRight } from 'lucide-react';
 import Card from '../ui/Card';
 import Badge from '../ui/Badge';
-import { cn, statusTone, truncate } from '../../lib/utils';
+import { cn, statusTone, truncate, projectStatusLabel } from '../../lib/utils';
 
 export default function FavoritesRow({ favorites = [] }) {
   const navigate = useNavigate();
@@ -26,14 +26,16 @@ export default function FavoritesRow({ favorites = [] }) {
     <div className="flex gap-4 overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }}>
       {favorites.map((p, i) => {
         const tone = statusTone(p.status);
-        const icon =
-          p.status === 'running' ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : p.status === 'failed' ? (
-            <AlertTriangle className="h-5 w-5" />
-          ) : (
-            <FolderGit2 className="h-5 w-5" />
-          );
+        const busy = p.status === 'running' || p.status === 'validating';
+        const icon = busy ? (
+          <Loader2 className="h-5 w-5 animate-spin" />
+        ) : p.status === 'failed' ? (
+          <AlertTriangle className="h-5 w-5" />
+        ) : p.status === 'validation_failed' ? (
+          <ShieldAlert className="h-5 w-5" />
+        ) : (
+          <FolderGit2 className="h-5 w-5" />
+        );
         return (
           <motion.button
             key={p.id}
@@ -47,9 +49,9 @@ export default function FavoritesRow({ favorites = [] }) {
               <div
                 className={cn(
                   'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl',
-                  p.status === 'running'
+                  p.status === 'running' || p.status === 'validating'
                     ? 'bg-accent/15 text-accent-soft'
-                    : p.status === 'failed'
+                    : p.status === 'failed' || p.status === 'validation_failed'
                       ? 'bg-rose-500/15 text-rose-400'
                       : 'bg-emerald-500/15 text-emerald-400'
                 )}
@@ -70,8 +72,8 @@ export default function FavoritesRow({ favorites = [] }) {
             </div>
             <div className="mt-auto flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
-                <Badge tone={tone} dot={p.status === 'running'} pulse={p.status === 'running'}>
-                  {p.status === 'running' ? 'Building' : p.status}
+                <Badge tone={tone} dot={busy} pulse={busy}>
+                  {projectStatusLabel(p.status)}
                 </Badge>
                 <Badge tone="violet">{p.stack || 'Auto'}</Badge>
               </div>

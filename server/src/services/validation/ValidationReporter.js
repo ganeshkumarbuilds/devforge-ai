@@ -34,6 +34,14 @@ function buildReport({ ok, attempts, steps, logs, project }) {
         log: logTail,
         suggestedFix: 'The missing files were regenerated automatically. Re-run validation.',
       });
+    } else if (name === 'api-contract') {
+      issues.push({
+        type: 'api-contract-mismatch',
+        title: 'API contract mismatch — frontend calls an endpoint the backend does not expose',
+        detail: message || 'The frontend calls endpoints that are missing on the backend.',
+        log: logTail,
+        suggestedFix: 'Missing routes and controllers were regenerated and passed to the self-healing agent. Re-run validation.',
+      });
     } else if (name === 'install') {
       issues.push({
         type: 'missing-dependency',
@@ -42,21 +50,45 @@ function buildReport({ ok, attempts, steps, logs, project }) {
         log: logTail,
         suggestedFix: 'Ensure package.json lists valid dependencies. Check network access and retry.',
       });
-    } else if (name === 'build') {
+    } else if (name === 'build' || name === 'backend-build') {
       issues.push({
         type: 'build-error',
-        title: 'Frontend build failed',
-        detail: message || 'npm run build failed for the frontend.',
+        title: name === 'backend-build' ? 'Backend build failed' : 'Frontend build failed',
+        detail: message || 'npm run build failed.',
         log: logTail,
         suggestedFix: 'The build errors above were used to repair the code. Re-run validation.',
       });
     } else if (name === 'start') {
       issues.push({
         type: 'start-error',
-        title: 'Backend failed to start',
-        detail: message || 'The backend server did not start successfully.',
+        title: 'Backend failed to start or health check failed',
+        detail: message || 'The backend server did not start successfully or /api/health did not return HTTP 200.',
         log: logTail,
         suggestedFix: 'The startup errors above were used to repair the code. Re-run validation.',
+      });
+    } else if (name === 'frontend-load') {
+      issues.push({
+        type: 'frontend-load-error',
+        title: 'Frontend did not load',
+        detail: message || 'The built frontend did not load successfully.',
+        log: logTail,
+        suggestedFix: 'Check the frontend build output and entrypoint. Re-run validation.',
+      });
+    } else if (name === 'e2e' || name === 'e2e-ui') {
+      issues.push({
+        type: 'e2e-failure',
+        title: 'End-to-end tests failed',
+        detail: message || 'Register / login / create / update / delete / logout checks failed.',
+        log: logTail,
+        suggestedFix: 'E2E failures were passed to the self-healing agent. Re-run validation.',
+      });
+    } else if (/^e2e-/.test(name)) {
+      issues.push({
+        type: 'e2e-failure',
+        title: 'End-to-end test failed',
+        detail: message || 'An E2E check failed.',
+        log: logTail,
+        suggestedFix: 'E2E failures were passed to the self-healing agent. Re-run validation.',
       });
     } else {
       issues.push({
@@ -162,7 +194,7 @@ class ValidationReporter {
       level: ok ? 'success' : 'error',
       source: 'validator',
       message: ok
-        ? `Validation passed (attempt ${attempt}): frontend builds and backend starts.`
+        ? `Validation passed (attempt ${attempt}): structure, API contract, build, health checks and E2E tests all pass.`
         : `Validation failed (attempt ${attempt}): ${String(error || 'unknown error').slice(0, 500)}`,
     });
   }

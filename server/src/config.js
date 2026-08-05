@@ -51,6 +51,13 @@ const config = {
   validationStartTimeoutMs: parseInt(requireEnv('VALIDATION_START_TIMEOUT_MS', '90000'), 10),
   validationHealthTimeoutMs: parseInt(requireEnv('VALIDATION_HEALTH_TIMEOUT_MS', '10000'), 10),
   validationAiFixEnabled: parseBool(process.env.VALIDATION_AI_FIX_ENABLED, true),
+  // Individual validation stages (static / API contract / runtime / E2E).
+  validationStaticEnabled: parseBool(process.env.VALIDATION_STATIC_ENABLED, true),
+  validationApiContractEnabled: parseBool(process.env.VALIDATION_API_CONTRACT_ENABLED, true),
+  validationRuntimeEnabled: parseBool(process.env.VALIDATION_RUNTIME_ENABLED, true),
+  validationE2eEnabled: parseBool(process.env.VALIDATION_E2E_ENABLED, true),
+  validationFrontendHealthTimeoutMs: parseInt(requireEnv('VALIDATION_FRONTEND_HEALTH_TIMEOUT_MS', '15000'), 10),
+  validationE2eTimeoutMs: parseInt(requireEnv('VALIDATION_E2E_TIMEOUT_MS', '180000'), 10),
   // Export Protection: never ship an unvalidated project unless explicitly
   // opted out by the operator.
   validationAllowUnvalidatedDownload: parseBool(process.env.VALIDATION_ALLOW_UNVALIDATED_DOWNLOAD, false),

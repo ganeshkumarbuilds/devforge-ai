@@ -78,13 +78,32 @@ export function formatNumber(n) {
 export function statusTone(status) {
   const map = {
     running: 'accent',
+    validating: 'amber',
     completed: 'green',
     failed: 'red',
+    validation_failed: 'red',
     pending: 'slate',
     building: 'accent',
     queued: 'slate',
   };
   return map[status] || 'slate';
+}
+
+export function projectStatusLabel(status) {
+  switch (status) {
+    case 'running':
+      return 'Building';
+    case 'validating':
+      return 'Validating…';
+    case 'completed':
+      return 'Completed';
+    case 'failed':
+      return 'Failed';
+    case 'validation_failed':
+      return 'Validation Failed';
+    default:
+      return status || '—';
+  }
 }
 
 export function downloadTextFile(content, filename, type = 'text/plain;charset=utf-8') {

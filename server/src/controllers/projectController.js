@@ -2,31 +2,34 @@ const fsp = require('fs/promises');
 const path = require('path');
 const prisma = require('../lib/prisma');
 const HttpError = require('../utils/httpError');
-const { Pipeline, persistGeneratedFiles, createZipBuffer, languageOf } = require('../services/pipelineService');
+const { Pipeline, persistGeneratedFiles, createZipBuffer } = require('../services/pipelineService');
 const { generatedDir } = require('../config');
 const { isConfigured, getModel } = require('../services/openrouterService');
 const { getLogs: fetchLogs } = require('../services/buildLogService');
 const { buildLogsMarkdown, projectMarkdown, buildPdf } = require('../services/exportService');
-const { createVersion } = require('../services/versionService');
 const { requireOwnedProject } = require('../utils/projectAccess');
 const { slugify } = require('../utils/fileUtils');
 const previewService = require('../services/previewService');
 const buildValidator = require('../services/validation/BuildValidator');
+const repairService = require('../services/repairService');
+const { finalizeGeneratedProject } = require('../services/finalizeService');
 
 const activePipelines = new Map();
 
-async function maybeStartPreview(projectId) {
-  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { status: true } });
-  if (!project || project.status !== 'completed') return;
-  const count = await prisma.projectFile.count({ where: { projectId } });
-  if (count === 0) return;
-  // Build Validation Pipeline must pass before a preview is allowed to start.
-  const result = await buildValidator.validateProject(projectId);
-  if (!result.ok) {
-    console.warn(`[Preview] validation failed for ${projectId} — preview not started.`);
-    return;
-  }
-  previewService.start(projectId, { install: false }).catch((err) => console.error('[Preview] auto-start failed', err.message));
+/**
+ * Finish a generated project. A project is only marked "Completed" once the
+ * full verification pipeline passes (static structure, API contract, builds,
+ * runtime health checks, E2E tests). Otherwise it is marked "Validation
+ * Failed" and detailed diagnostics remain attached to the project.
+ */
+async function finalizeProject(pipeline, { prompt, summary }) {
+  return finalizeGeneratedProject({
+    projectId: pipeline.projectId,
+    prompt,
+    summary,
+    title: pipeline.context.prd && pipeline.context.prd.title,
+    files: pipeline.context.files,
+  });
 }
 
 function projectSummary(p) {
@@ -94,38 +97,10 @@ async function generate(req, res) {
   (async () => {
     try {
       await pipeline.run();
-      if (pipeline.context.prd && pipeline.context.prd.title && project.title === 'Generating…') {
-        const title = pipeline.context.prd.title.slice(0, 80);
-        await prisma.project.update({
-          where: { id: project.id },
-          data: { title },
-        });
-      }
-      const files = Object.entries(pipeline.context.files).map(([p, content]) => ({
-        path: p,
-        content,
-      }));
-      if (files.length > 0) {
-        await prisma.projectFile.createMany({
-          data: files.map((f) => ({
-            projectId: project.id,
-            path: f.path,
-            content: f.content,
-            language: languageOf(f.path),
-          })),
-          skipDuplicates: true,
-        });
-      }
-      const logs = await fetchLogs({ projectId: project.id, limit: 2000 });
-      await createVersion({
-        projectId: project.id,
+      await finalizeProject(pipeline, {
         prompt: prompt.trim(),
-        model: getModel(),
-        files,
-        logs,
         summary: `Snapshot from generation "${project.title}"`,
       });
-      await maybeStartPreview(project.id);
     } catch (err) {
       console.error('[Pipeline]', err);
     } finally {
@@ -153,7 +128,7 @@ async function listProjects(req, res) {
       { stack: { contains: q } },
     ];
   }
-  if (status && ['running', 'completed', 'failed'].includes(status)) {
+  if (status && ['running', 'validating', 'completed', 'failed', 'validation_failed'].includes(status)) {
     where.status = status;
   }
   if (stack && typeof stack === 'string' && stack.trim()) {
@@ -174,7 +149,7 @@ async function listProjects(req, res) {
     }),
   ]);
 
-  const statusCounts = { running: 0, completed: 0, failed: 0 };
+  const statusCounts = { running: 0, validating: 0, completed: 0, failed: 0, validation_failed: 0 };
   for (const c of counts) statusCounts[c.status] = c._count._all;
 
   res.json({
@@ -215,11 +190,11 @@ async function getStats(req, res) {
     prisma.project.count({ where: { ownerId, favorite: true } }),
   ]);
 
-  const statusCounts = { running: 0, completed: 0, failed: 0 };
+  const statusCounts = { running: 0, validating: 0, completed: 0, failed: 0, validation_failed: 0 };
   for (const p of projects) {
     if (Object.prototype.hasOwnProperty.call(statusCounts, p.status)) statusCounts[p.status] += 1;
   }
-  const finished = statusCounts.completed + statusCounts.failed;
+  const finished = statusCounts.completed + statusCounts.failed + statusCounts.validation_failed;
   const successRate = finished > 0 ? Math.round((statusCounts.completed / finished) * 100) : null;
 
   // Average per-project build time (sum of its agent-run durations).
@@ -307,7 +282,9 @@ async function getProject(req, res) {
 
   res.json({
     project: projectSummary(project),
-    isBuilding: !!active,
+    // "Building" means the generation agents are still running. During
+    // automated verification the status is "validating" instead.
+    isBuilding: Boolean(active) && project.status === 'running',
     agents: project.agents.map((a) => ({
       id: a.id,
       role: a.role,
@@ -326,6 +303,7 @@ async function getProject(req, res) {
     preview: previewService.getStatus(id),
     validation: await buildValidator.getValidationReport(id),
     validationRunning: buildValidator.isValidationRunning(id),
+    repairRunning: repairService.isRepairRunning(id),
   });
 }
 
@@ -394,23 +372,10 @@ async function rebuildProject(req, res) {
   (async () => {
     try {
       await pipeline.run();
-      const files = Object.entries(pipeline.context.files).map(([p, content]) => ({ path: p, content }));
-      if (files.length > 0) {
-        await prisma.projectFile.createMany({
-          data: files.map((f) => ({ projectId: id, path: f.path, content: f.content, language: languageOf(f.path) })),
-          skipDuplicates: true,
-        });
-      }
-      const logs = await fetchLogs({ projectId: id, limit: 2000 });
-      await createVersion({
-        projectId: id,
+      await finalizeProject(pipeline, {
         prompt: project.description,
-        model: getModel(),
-        files,
-        logs,
-        summary: `Snapshot from rebuild`,
+        summary: 'Snapshot from rebuild',
       });
-      await maybeStartPreview(id);
     } catch (err) {
       console.error('[Rebuild Pipeline]', err);
     } finally {
@@ -538,7 +503,30 @@ async function validate(req, res) {
   const { id } = req.params;
   await requireOwnedProject(id, req.userId);
   const result = await buildValidator.validateProject(id, { force: true });
+  // Keep the project status in sync with validation: only "Completed" when the
+  // entire pipeline passes, otherwise "Validation Failed".
+  await prisma.project
+    .update({
+      where: { id },
+      data: result.ok ? { status: 'completed' } : { status: 'validation_failed' },
+    })
+    .catch(() => {});
   res.json({ ok: result.ok, ...(result.report || {}), durationMs: result.durationMs });
+}
+
+async function repairProject(req, res) {
+  const { id } = req.params;
+  const { area } = req.body || {};
+  await requireOwnedProject(id, req.userId);
+  const result = await repairService.startRepair(id, area);
+  res.status(202).json(result);
+}
+
+async function listRepairs(req, res) {
+  const { id } = req.params;
+  await requireOwnedProject(id, req.userId);
+  const repairs = await repairService.listRepairs(id);
+  res.json({ repairs });
 }
 
 async function getStatus(req, res) {
@@ -566,5 +554,7 @@ module.exports = {
   exportDocs,
   getLogs,
   validate,
+  repairProject,
+  listRepairs,
   getStatus,
 };
