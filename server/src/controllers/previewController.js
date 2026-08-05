@@ -157,13 +157,18 @@ async function proxy(req, res) {
     upstreamPath = upstreamPath.replace(/\?$/, '');
   }
 
+  // Target the exact host the preview server actually bound to (the health
+  // check records it), falling back to the configured loopback host.
+  const targetHost = status.host || config.preview.host;
+  const targetHeader = targetHost.includes(':') ? `[${targetHost}]:${status.port}` : `${targetHost}:${status.port}`;
+
   const upstream = http.request(
     {
-      hostname: config.preview.host,
+      hostname: targetHost,
       port: status.port,
       method: req.method,
       path: upstreamPath || '/',
-      headers: sanitizeHeaders(req.headers, `${config.preview.host}:${status.port}`),
+      headers: sanitizeHeaders(req.headers, targetHeader),
       timeout: UPSTREAM_TIMEOUT_MS,
     },
     (upRes) => {
@@ -194,9 +199,11 @@ async function proxy(req, res) {
 
   upstream.on('timeout', () => {
     upstream.destroy();
+    logger.warn(`[Preview] ${id}: proxy to ${targetHost}:${status.port} timed out.`);
     if (!res.headersSent) res.status(504).json({ error: 'The preview server took too long to respond.' });
   });
-  upstream.on('error', () => {
+  upstream.on('error', (err) => {
+    logger.warn(`[Preview] ${id}: proxy to ${targetHost}:${status.port} failed: ${err.message}`);
     if (!res.headersSent) res.status(502).json({ error: 'The preview server is unavailable.' });
     else res.end();
   });
@@ -233,7 +240,8 @@ function handleUpgrade(req, socket, head) {
 
   const accept = crypto.createHash('sha1').update(key + WS_GUID).digest('base64');
 
-  const target = net.connect(status.port, config.preview.host, () => {
+  const targetHost = status.host || config.preview.host;
+  const target = net.connect(status.port, targetHost, () => {
     socket.write(
       `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`
     );
